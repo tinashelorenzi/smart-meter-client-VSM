@@ -1,0 +1,148 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-slate-700/50;
+  }
+  
+  body {
+    @apply bg-dark-950 text-slate-100 font-sans;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  /* Glass morphism effects */
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10;
+  }
+
+  .glass-card {
+    @apply glass rounded-2xl p-6 shadow-2xl;
+  }
+
+  .glass-button {
+    @apply glass rounded-xl px-6 py-3 transition-all duration-300 hover:bg-white/10 hover:shadow-lg;
+  }
+
+  /* Custom button styles */
+  .btn-primary {
+    @apply bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white font-semibold py-3 px-6 rounded-xl transition-all duration-300 shadow-lg hover:shadow-primary-500/25 hover:shadow-xl;
+  }
+
+  .btn-secondary {
+    @apply glass-button text-slate-300 hover:text-white border border-slate-700 hover:border-primary-500/50;
+  }
+
+  /* Form inputs */
+  .input-field {
+    @apply glass rounded-xl px-4 py-3 text-slate-100 placeholder:text-slate-400 border border-slate-700/50 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all duration-300 outline-none;
+  }
+
+  /* Custom scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-dark-900 rounded-full;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-primary-500/50 rounded-full hover:bg-primary-500;
+  }
+
+  /* Glow effects */
+  .glow-primary {
+    box-shadow: 0 0 20px rgba(103, 122, 229, 0.3);
+  }
+
+  .glow-primary-intense {
+    box-shadow: 0 0 40px rgba(103, 122, 229, 0.6);
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary-400 to-primary-600 bg-clip-text text-transparent;
+  }
+
+  /* Loading spinner */
+  .spinner {
+    @apply animate-spin rounded-full border-2 border-slate-700 border-t-primary-500;
+  }
+
+  /* Floating animation for cards */
+  .float-card {
+    @apply animate-float;
+  }
+
+  /* Custom grid pattern background */
+  .grid-pattern {
+    background-image: 
+      linear-gradient(rgba(103, 122, 229, 0.1) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(103, 122, 229, 0.1) 1px, transparent 1px);
+    background-size: 50px 50px;
+  }
+
+  /* Meteor effect */
+  .meteor {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 2px;
+    height: 2px;
+    background: linear-gradient(90deg, #677AE5, transparent);
+    border-radius: 9999px;
+    filter: drop-shadow(0 0 6px #677AE5);
+    animation: meteor 3s linear infinite;
+  }
+
+  @keyframes meteor {
+    0% {
+      transform: rotate(215deg) translateX(0);
+      opacity: 1;
+    }
+    70% {
+      opacity: 1;
+    }
+    100% {
+      transform: rotate(215deg) translateX(-500px);
+      opacity: 0;
+    }
+  }
+
+  /* Pulsing dot */
+  .pulse-dot {
+    @apply relative;
+  }
+
+  .pulse-dot::before {
+    @apply content-[''] absolute inset-0 rounded-full bg-primary-500 animate-ping;
+  }
+}
+
+@layer utilities {
+  .text-shadow {
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .text-shadow-lg {
+    text-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+  }
+
+  /* Hide scrollbar but allow scrolling */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+}

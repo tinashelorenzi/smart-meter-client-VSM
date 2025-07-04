@@ -46,7 +46,7 @@ const AdminPortal = () => {
   const [pagination, setPagination] = useState({ limit: 20, offset: 0 });
 
   // Simulated API calls (replace with actual API calls to your Flask backend)
-  const API_BASE = 'http://localhost:5000/api';
+  const API_BASE = 'http://poc-vsm.vertexcatalystgroup.co.za:562/api';
 
   const fetchWithAuth = async (url, options = {}) => {
     const token = localStorage.getItem('authToken');

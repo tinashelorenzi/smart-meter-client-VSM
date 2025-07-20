@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { API_CONFIG } from '../utils/constants';
 import { 
   Users, 
   Zap, 
@@ -54,7 +55,7 @@ const AdminPortal = () => {
   const [pagination, setPagination] = useState({ limit: 20, offset: 0 });
 
   // API calls
-  const API_BASE = 'http://localhost:5000/api';
+  const API_BASE = API_CONFIG.BASE_URL;
 
   const fetchWithAuth = async (url, options = {}) => {
     const token = localStorage.getItem('authToken');

@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create axios instance with default config
 const api = axios.create({
-  baseURL: 'https://poc-vsm.vertexcatalystgroup.co.za:562/api',
+  baseURL: 'http://localhost:5000/api',
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
@@ -112,6 +112,16 @@ export const meterAPI = {
 export const adminAPI = {
   getUsers: async () => {
     const response = await api.get('/admin/users');
+    return response.data;
+  },
+
+  adminTopup: async (topupData) => {
+    const response = await api.post('/admin/topup', topupData);
+    return response.data;
+  },
+
+  getMeterDetails: async (deviceId) => {
+    const response = await api.get(`/admin/meters/${deviceId}/details`);
     return response.data;
   },
   

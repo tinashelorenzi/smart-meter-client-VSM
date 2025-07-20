@@ -22,7 +22,11 @@ import {
   CheckCircle,
   Clock,
   XCircle,
-  LogOut
+  LogOut,
+  CreditCard,
+  Minus,
+  Info,
+  Loader2
 } from 'lucide-react';
 
 const AdminPortal = () => {
@@ -41,12 +45,16 @@ const AdminPortal = () => {
   const [showUserModal, setShowUserModal] = useState(false);
   const [showMeterModal, setShowMeterModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showTopupModal, setShowTopupModal] = useState(false);
+  const [meterDetails, setMeterDetails] = useState(null);
+  const [topupData, setTopupData] = useState({ units: '', notes: '' });
+  const [processingTopup, setProcessingTopup] = useState(false);
   const [unassignedMeters, setUnassignedMeters] = useState([]);
   const [filterStatus, setFilterStatus] = useState('all');
   const [pagination, setPagination] = useState({ limit: 20, offset: 0 });
 
-  // Simulated API calls (replace with actual API calls to your Flask backend)
-  const API_BASE = 'https://poc-vsm.vertexcatalystgroup.co.za:562/api';
+  // API calls
+  const API_BASE = 'http://localhost:5000/api';
 
   const fetchWithAuth = async (url, options = {}) => {
     const token = localStorage.getItem('authToken');
@@ -124,7 +132,6 @@ const AdminPortal = () => {
       const response = await fetchWithAuth('/admin/meters/unassigned');
       const data = await response.json();
       if (data.success) {
-        // Handle both possible response structures
         setUnassignedMeters(data.unassigned_meters || data.meters || []);
       } else {
         setUnassignedMeters([]);
@@ -133,6 +140,78 @@ const AdminPortal = () => {
       console.error('Failed to fetch unassigned meters:', error);
       setUnassignedMeters([]);
     }
+  };
+
+  // NEW: Fetch meter details for admin top-up
+  const fetchMeterDetails = async (deviceId) => {
+    try {
+      const response = await fetchWithAuth(`/admin/meters/${deviceId}/details`);
+      const data = await response.json();
+      if (data.success) {
+        setMeterDetails(data);
+      } else {
+        alert('Failed to fetch meter details: ' + data.message);
+      }
+    } catch (error) {
+      console.error('Failed to fetch meter details:', error);
+      alert('Failed to fetch meter details');
+    }
+  };
+
+  // NEW: Handle admin top-up
+  const handleAdminTopup = async () => {
+    if (!selectedMeter || !topupData.units) {
+      alert('Please enter a valid amount');
+      return;
+    }
+
+    const units = parseInt(topupData.units);
+    if (isNaN(units) || units === 0) {
+      alert('Please enter a valid non-zero amount');
+      return;
+    }
+
+    if (units < -10000 || units > 10000) {
+      alert('Amount must be between -10000 and +10000');
+      return;
+    }
+
+    setProcessingTopup(true);
+    try {
+      const response = await fetchWithAuth('/admin/topup', {
+        method: 'POST',
+        body: JSON.stringify({
+          device_id: selectedMeter.device_id,
+          units: units,
+          admin_notes: topupData.notes
+        }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        const actionType = units < 0 ? 'deduction' : 'top-up';
+        alert(`Admin ${actionType} successful! ${Math.abs(units)} units ${units < 0 ? 'deducted from' : 'added to'} ${selectedMeter.device_id}`);
+        setShowTopupModal(false);
+        setTopupData({ units: '', notes: '' });
+        setSelectedMeter(null);
+        setMeterDetails(null);
+        fetchMeters();
+        fetchStats();
+      } else {
+        alert('Admin top-up failed: ' + data.message);
+      }
+    } catch (error) {
+      console.error('Failed to process admin top-up:', error);
+      alert('Failed to process admin top-up');
+    } finally {
+      setProcessingTopup(false);
+    }
+  };
+
+  // NEW: Open top-up modal
+  const openTopupModal = async (meter) => {
+    setSelectedMeter(meter);
+    setShowTopupModal(true);
+    await fetchMeterDetails(meter.device_id);
   };
 
   const assignMeter = async (userId, deviceId, nickname = '') => {
@@ -242,12 +321,12 @@ const AdminPortal = () => {
     </button>
   );
 
-  const Modal = ({ isOpen, onClose, title, children }) => {
+  const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-md" }) => {
     if (!isOpen) return null;
     
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-        <div className="bg-white dark:bg-gray-800 rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className={`bg-white dark:bg-gray-800 rounded-lg ${maxWidth} w-full max-h-[90vh] overflow-y-auto`}>
           <div className="flex justify-between items-center p-6 border-b border-gray-200 dark:border-gray-700">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
             <button
@@ -262,6 +341,158 @@ const AdminPortal = () => {
       </div>
     );
   };
+
+  // NEW: Admin Top-up Modal
+  const AdminTopupModal = () => (
+    <Modal 
+      isOpen={showTopupModal} 
+      onClose={() => {
+        setShowTopupModal(false);
+        setSelectedMeter(null);
+        setMeterDetails(null);
+        setTopupData({ units: '', notes: '' });
+      }} 
+      title="Admin Meter Top-up / Deduction"
+      maxWidth="max-w-lg"
+    >
+      {selectedMeter && (
+        <div className="space-y-6">
+          {/* Meter Information */}
+          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
+            <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Meter Information</h4>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <span className="text-gray-600 dark:text-gray-400">Device ID:</span>
+                <p className="font-medium text-gray-900 dark:text-white">{selectedMeter.device_id}</p>
+              </div>
+              <div>
+                <span className="text-gray-600 dark:text-gray-400">Current Usage:</span>
+                <p className="font-medium text-gray-900 dark:text-white">{selectedMeter.kw_usage || 0} kW</p>
+              </div>
+              <div>
+                <span className="text-gray-600 dark:text-gray-400">Units Left:</span>
+                <p className="font-medium text-gray-900 dark:text-white">{selectedMeter.units_left || 0} units</p>
+              </div>
+              <div>
+                <span className="text-gray-600 dark:text-gray-400">Pending Units:</span>
+                <p className="font-medium text-gray-900 dark:text-white">{selectedMeter.pending_units || 0} units</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Assigned Users */}
+          {meterDetails && meterDetails.assigned_users && meterDetails.assigned_users.length > 0 && (
+            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
+              <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Assigned Users</h4>
+              <div className="space-y-1">
+                {meterDetails.assigned_users.map((user, index) => (
+                  <div key={index} className="text-sm text-gray-700 dark:text-gray-300">
+                    {user.name} (@{user.username}) - {user.nickname || 'No nickname'}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Top-up Form */}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Units Amount
+              </label>
+              <input
+                type="number"
+                value={topupData.units}
+                onChange={(e) => setTopupData(prev => ({ ...prev, units: e.target.value }))}
+                placeholder="Enter amount (positive to add, negative to deduct)"
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                min="-10000"
+                max="10000"
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Range: -10,000 to +10,000 units. Use negative values for deductions.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Admin Notes (Optional)
+              </label>
+              <textarea
+                value={topupData.notes}
+                onChange={(e) => setTopupData(prev => ({ ...prev, notes: e.target.value }))}
+                placeholder="Enter reason for this adjustment..."
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                rows="3"
+                maxLength="500"
+              />
+            </div>
+
+            {/* Quick Amount Buttons */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Quick Amounts
+              </label>
+              <div className="grid grid-cols-4 gap-2">
+                {[100, 200, 500, 1000].map((amount) => (
+                  <button
+                    key={amount}
+                    onClick={() => setTopupData(prev => ({ ...prev, units: amount.toString() }))}
+                    className="px-3 py-2 text-sm bg-green-100 hover:bg-green-200 dark:bg-green-800 dark:hover:bg-green-700 text-green-800 dark:text-green-200 rounded-md transition-colors"
+                  >
+                    +{amount}
+                  </button>
+                ))}
+              </div>
+              <div className="grid grid-cols-4 gap-2 mt-2">
+                {[-50, -100, -200, -500].map((amount) => (
+                  <button
+                    key={amount}
+                    onClick={() => setTopupData(prev => ({ ...prev, units: amount.toString() }))}
+                    className="px-3 py-2 text-sm bg-red-100 hover:bg-red-200 dark:bg-red-800 dark:hover:bg-red-700 text-red-800 dark:text-red-200 rounded-md transition-colors"
+                  >
+                    {amount}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-3 pt-4 border-t border-gray-200 dark:border-gray-600">
+            <button
+              onClick={() => {
+                setShowTopupModal(false);
+                setSelectedMeter(null);
+                setMeterDetails(null);
+                setTopupData({ units: '', notes: '' });
+              }}
+              className="flex-1 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded-md hover:bg-gray-400 dark:hover:bg-gray-500 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleAdminTopup}
+              disabled={processingTopup || !topupData.units}
+              className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+            >
+              {processingTopup ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <CreditCard className="w-4 h-4 mr-2" />
+                  {topupData.units && parseInt(topupData.units) < 0 ? 'Deduct' : 'Top Up'}
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
 
   const UserModal = () => (
     <Modal isOpen={showUserModal} onClose={() => setShowUserModal(false)} title="User Details">
@@ -642,7 +873,7 @@ const AdminPortal = () => {
     );
   };
 
-  // Meters management content
+  // Meters management content - WITH Top-up functionality
   const MetersContent = () => {
     const meterColumns = [
       {
@@ -686,6 +917,36 @@ const AdminPortal = () => {
         header: 'Last Update',
         key: 'last_update',
         render: (meter) => meter.last_update || 'Never'
+      },
+      {
+        header: 'Actions',
+        key: 'actions',
+        render: (meter) => (
+          <div className="flex gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                openTopupModal(meter);
+              }}
+              className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700 transition-colors flex items-center"
+              title="Admin Top-up/Deduction"
+            >
+              <CreditCard className="w-3 h-3 mr-1" />
+              Top-up
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                // You can add view details functionality here
+              }}
+              className="bg-gray-600 text-white px-3 py-1 rounded text-xs hover:bg-gray-700 transition-colors flex items-center"
+              title="View Details"
+            >
+              <Eye className="w-3 h-3 mr-1" />
+              View
+            </button>
+          </div>
+        )
       }
     ];
 
@@ -995,6 +1256,7 @@ const AdminPortal = () => {
         <UserModal />
         <MeterModal />
         <AssignMeterModal />
+        <AdminTopupModal />
       </div>
     </div>
   );

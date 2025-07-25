@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { API_CONFIG } from '../utils/constants';
+import { useAdminDashboard } from '../hooks/useAdminDashboard';
 import { 
   Users, 
   Zap, 
@@ -27,19 +27,21 @@ import {
   CreditCard,
   Minus,
   Info,
-  Loader2
+  Loader2,
+  Wifi,
+  WifiOff,
+  Play,
+  Pause
 } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { motion, AnimatePresence } from 'framer-motion';
+import toast from 'react-hot-toast';
 
-const AdminPortal = () => {
+const AdminDashboard = () => {
   const { user, logout } = useAuth();
   
   // State management
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [users, setUsers] = useState([]);
-  const [meters, setMeters] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [stats, setStats] = useState({});
-  const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
   const [selectedMeter, setSelectedMeter] = useState(null);
@@ -47,303 +49,472 @@ const AdminPortal = () => {
   const [showMeterModal, setShowMeterModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [showTopupModal, setShowTopupModal] = useState(false);
+  const [showChartsModal, setShowChartsModal] = useState(false);
   const [meterDetails, setMeterDetails] = useState(null);
   const [topupData, setTopupData] = useState({ units: '', notes: '' });
   const [processingTopup, setProcessingTopup] = useState(false);
-  const [unassignedMeters, setUnassignedMeters] = useState([]);
   const [filterStatus, setFilterStatus] = useState('all');
   const [pagination, setPagination] = useState({ limit: 20, offset: 0 });
 
-  // API calls
-  const API_BASE = API_CONFIG.BASE_URL;
-
-  const fetchWithAuth = async (url, options = {}) => {
-    const token = localStorage.getItem('authToken');
-    return fetch(`${API_BASE}${url}`, {
-      ...options,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
-  };
-
-  const fetchStats = async () => {
-    try {
-      const response = await fetchWithAuth('/admin/stats');
-      const data = await response.json();
-      if (data.success) {
-        setStats(data.stats);
-      }
-    } catch (error) {
-      console.error('Failed to fetch stats:', error);
-    }
-  };
-
-  const fetchUsers = async () => {
-    try {
-      setLoading(true);
-      const response = await fetchWithAuth('/admin/users');
-      const data = await response.json();
-      if (data.success) {
-        setUsers(data.users);
-      }
-    } catch (error) {
-      console.error('Failed to fetch users:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchMeters = async () => {
-    try {
-      setLoading(true);
-      const response = await fetchWithAuth('/admin/meters');
-      const data = await response.json();
-      if (data.success) {
-        setMeters(data.meters);
-      }
-    } catch (error) {
-      console.error('Failed to fetch meters:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchTransactions = async () => {
-    try {
-      setLoading(true);
-      const url = `/admin/transactions?limit=${pagination.limit}&offset=${pagination.offset}${filterStatus !== 'all' ? `&status=${filterStatus}` : ''}`;
-      const response = await fetchWithAuth(url);
-      const data = await response.json();
-      if (data.success) {
-        setTransactions(data.transactions);
-        setPagination(prev => ({ ...prev, total: data.pagination?.total || 0 }));
-      }
-    } catch (error) {
-      console.error('Failed to fetch transactions:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchUnassignedMeters = async () => {
-    try {
-      const response = await fetchWithAuth('/admin/meters/unassigned');
-      const data = await response.json();
-      if (data.success) {
-        setUnassignedMeters(data.unassigned_meters || data.meters || []);
-      } else {
-        setUnassignedMeters([]);
-      }
-    } catch (error) {
-      console.error('Failed to fetch unassigned meters:', error);
-      setUnassignedMeters([]);
-    }
-  };
+  // Use the custom hook for data management
+  const {
+    // Data
+    stats,
+    users,
+    meters,
+    transactions,
+    unassignedMeters,
+    chartData,
+    
+    // Loading states
+    loading,
+    chartLoading,
+    
+    // Auto-refresh state
+    isAutoRefreshActive,
+    lastRefresh,
+    refreshError,
+    connectionStatus,
+    
+    // Chart state
+    chartPeriod,
+    selectedChartMeter,
+    
+    // Actions
+    toggleAutoRefresh,
+    manualRefresh,
+    assignMeterWithValidation,
+    createMeter,
+    adminTopup,
+    fetchAllData,
+    
+    // Setters
+    setChartPeriod,
+    setSelectedChartMeter,
+    setUsers,
+    setMeters,
+    setTransactions,
+    setUnassignedMeters
+  } = useAdminDashboard();
 
   // NEW: Fetch meter details for admin top-up
   const fetchMeterDetails = async (deviceId) => {
     try {
-      const response = await fetchWithAuth(`/admin/meters/${deviceId}/details`);
-      const data = await response.json();
-      if (data.success) {
-        setMeterDetails(data);
-      } else {
-        alert('Failed to fetch meter details: ' + data.message);
+      // This would typically use your API - for now we'll use the meter data we have
+      const meter = meters.find(m => m.device_id === deviceId);
+      if (meter) {
+        setMeterDetails({
+          meter_data: meter,
+          assigned_users: [] // Would come from API
+        });
       }
     } catch (error) {
       console.error('Failed to fetch meter details:', error);
-      alert('Failed to fetch meter details');
+      toast.error('Failed to fetch meter details');
     }
   };
 
-  // NEW: Handle admin top-up
+  // Handle admin top-up
   const handleAdminTopup = async () => {
     if (!selectedMeter || !topupData.units) {
-      alert('Please enter a valid amount');
+      toast.error('Please enter a valid amount');
       return;
     }
 
     const units = parseInt(topupData.units);
     if (isNaN(units) || units === 0) {
-      alert('Please enter a valid non-zero amount');
+      toast.error('Please enter a valid non-zero amount');
       return;
     }
 
     if (units < -10000 || units > 10000) {
-      alert('Amount must be between -10000 and +10000');
+      toast.error('Amount must be between -10000 and +10000');
       return;
     }
 
     setProcessingTopup(true);
     try {
-      const response = await fetchWithAuth('/admin/topup', {
-        method: 'POST',
-        body: JSON.stringify({
-          device_id: selectedMeter.device_id,
-          units: units,
-          admin_notes: topupData.notes
-        }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        const actionType = units < 0 ? 'deduction' : 'top-up';
-        alert(`Admin ${actionType} successful! ${Math.abs(units)} units ${units < 0 ? 'deducted from' : 'added to'} ${selectedMeter.device_id}`);
+      const result = await adminTopup(selectedMeter.device_id, units, topupData.notes);
+      if (result.success) {
         setShowTopupModal(false);
         setTopupData({ units: '', notes: '' });
         setSelectedMeter(null);
         setMeterDetails(null);
-        fetchMeters();
-        fetchStats();
-      } else {
-        alert('Admin top-up failed: ' + data.message);
       }
     } catch (error) {
       console.error('Failed to process admin top-up:', error);
-      alert('Failed to process admin top-up');
     } finally {
       setProcessingTopup(false);
     }
   };
 
-  // NEW: Open top-up modal
+  // Open top-up modal
   const openTopupModal = async (meter) => {
     setSelectedMeter(meter);
     setShowTopupModal(true);
     await fetchMeterDetails(meter.device_id);
   };
 
-  const assignMeter = async (userId, deviceId, nickname = '') => {
+  // Enhanced meter assignment with validation
+  const handleAssignMeter = async (userId, deviceId, nickname = '') => {
     try {
-      const response = await fetchWithAuth('/admin/assign-meter', {
-        method: 'POST',
-        body: JSON.stringify({ user_id: userId, device_id: deviceId, nickname }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        alert('Meter assigned successfully!');
-        fetchMeters();
-        fetchUnassignedMeters();
+      const result = await assignMeterWithValidation(userId, deviceId, nickname);
+      if (result.success) {
         setShowAssignModal(false);
-      } else {
-        alert('Failed to assign meter: ' + data.message);
       }
     } catch (error) {
       console.error('Failed to assign meter:', error);
-      alert('Failed to assign meter');
     }
   };
 
-  const createMeter = async (deviceId) => {
+  // Create new meter
+  const handleCreateMeter = async (deviceId) => {
     try {
-      const response = await fetchWithAuth('/admin/meters/create', {
-        method: 'POST',
-        body: JSON.stringify({ device_id: deviceId }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        alert('Meter created successfully!');
-        fetchMeters();
-        fetchUnassignedMeters();
+      const result = await createMeter(deviceId);
+      if (result.success) {
         setShowMeterModal(false);
-      } else {
-        alert('Failed to create meter: ' + data.message);
       }
     } catch (error) {
       console.error('Failed to create meter:', error);
-      alert('Failed to create meter');
     }
   };
 
+  // Complete transaction
   const completeTransaction = async (transactionId) => {
     try {
-      const response = await fetchWithAuth('/admin/transactions/complete', {
+      const response = await fetch(`/api/admin/transactions/complete`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ transaction_id: transactionId }),
       });
+      
       const data = await response.json();
       if (data.success) {
-        alert('Transaction completed successfully!');
-        fetchTransactions();
-        fetchStats();
+        toast.success('Transaction completed successfully!');
+        // Refresh data
+        manualRefresh();
       } else {
-        alert('Failed to complete transaction: ' + data.message);
+        toast.error('Failed to complete transaction: ' + data.message);
       }
     } catch (error) {
       console.error('Failed to complete transaction:', error);
-      alert('Failed to complete transaction');
+      toast.error('Failed to complete transaction');
     }
   };
 
-  useEffect(() => {
-    fetchStats();
-    if (activeTab === 'users') fetchUsers();
-    if (activeTab === 'meters') {
-      fetchMeters();
-      fetchUnassignedMeters();
-    }
-    if (activeTab === 'transactions') fetchTransactions();
-  }, [activeTab, filterStatus, pagination.offset]);
-
   // UI Components
-  const StatCard = ({ title, value, icon: Icon, color, trend }) => (
-    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+  const StatCard = ({ title, value, icon: Icon, color, trend, loading: cardLoading = false }) => (
+    <motion.div 
+      whileHover={{ scale: 1.02, y: -2 }}
+      className="glass-card border border-white/10"
+    >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm font-medium text-gray-600 dark:text-gray-400">{title}</p>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">{value}</p>
-          {trend && (
-            <p className="text-sm text-green-600 dark:text-green-400 mt-1 flex items-center">
+          <p className="text-sm font-medium text-slate-400">{title}</p>
+          {cardLoading ? (
+            <div className="flex items-center space-x-2 mt-2">
+              <Loader2 className="w-4 h-4 animate-spin text-primary-500" />
+              <span className="text-slate-400">Loading...</span>
+            </div>
+          ) : (
+            <p className="text-2xl font-bold text-white mt-1">{value?.toLocaleString() || '0'}</p>
+          )}
+          {trend && !cardLoading && (
+            <p className="text-sm text-green-400 mt-1 flex items-center">
               <TrendingUp className="w-4 h-4 mr-1" />
               {trend}
             </p>
           )}
         </div>
-        <div className={`p-3 rounded-full ${color}`}>
+        <div className={`p-3 rounded-xl ${color}`}>
           <Icon className="w-6 h-6 text-white" />
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 
-  const TabButton = ({ id, label, icon: Icon, isActive, onClick }) => (
-    <button
+  const TabButton = ({ id, label, icon: Icon, isActive, onClick, badge }) => (
+    <motion.button
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
       onClick={() => onClick(id)}
-      className={`flex items-center px-4 py-2 rounded-lg font-medium transition-colors ${
+      className={`flex items-center px-4 py-2 rounded-xl font-medium transition-all duration-300 relative ${
         isActive
-          ? 'bg-blue-600 text-white'
-          : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+          ? 'bg-primary-600 text-white shadow-lg'
+          : 'text-slate-300 hover:bg-white/5 hover:text-white'
       }`}
     >
       <Icon className="w-5 h-5 mr-2" />
       {label}
-    </button>
+      {badge && (
+        <span className="ml-2 px-2 py-1 text-xs bg-red-500 text-white rounded-full">
+          {badge}
+        </span>
+      )}
+    </motion.button>
   );
 
-  const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-md" }) => {
+  const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-md", showCloseButton = true }) => {
     if (!isOpen) return null;
     
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-        <div className={`bg-white dark:bg-gray-800 rounded-lg ${maxWidth} w-full max-h-[90vh] overflow-y-auto`}>
-          <div className="flex justify-between items-center p-6 border-b border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-            >
-              <XCircle className="w-6 h-6" />
-            </button>
-          </div>
-          <div className="p-6">{children}</div>
-        </div>
-      </div>
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50"
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            onClick={(e) => e.stopPropagation()}
+            className={`glass-card ${maxWidth} w-full max-h-[90vh] overflow-y-auto`}
+          >
+            {(title || showCloseButton) && (
+              <div className="flex justify-between items-center mb-6">
+                {title && (
+                  <h3 className="text-xl font-semibold text-white">{title}</h3>
+                )}
+                {showCloseButton && (
+                  <motion.button
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.9 }}
+                    onClick={onClose}
+                    className="text-slate-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-white/10"
+                  >
+                    <XCircle className="w-6 h-6" />
+                  </motion.button>
+                )}
+              </div>
+            )}
+            <div className={title || showCloseButton ? '' : 'pt-6'}>
+              {children}
+            </div>
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>
     );
   };
 
-  // NEW: Admin Top-up Modal
+  // Connection Status Indicator
+  const ConnectionStatus = () => (
+    <div className="flex items-center space-x-2">
+      <div className="flex items-center space-x-1">
+        {connectionStatus === 'connected' ? (
+          <Wifi className="w-4 h-4 text-green-400" />
+        ) : connectionStatus === 'connecting' ? (
+          <Loader2 className="w-4 h-4 animate-spin text-yellow-400" />
+        ) : (
+          <WifiOff className="w-4 h-4 text-red-400" />
+        )}
+        <span className={`text-sm ${
+          connectionStatus === 'connected' ? 'text-green-400' : 
+          connectionStatus === 'connecting' ? 'text-yellow-400' : 'text-red-400'
+        }`}>
+          {connectionStatus === 'connected' ? 'Connected' : 
+           connectionStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+        </span>
+      </div>
+      
+      {lastRefresh && (
+        <span className="text-xs text-slate-500">
+          Last: {lastRefresh.toLocaleTimeString()}
+        </span>
+      )}
+      
+      {refreshError && (
+        <AlertTriangle className="w-4 h-4 text-red-400" title={refreshError} />
+      )}
+    </div>
+  );
+
+  // Charts Modal Component
+  const ChartsModal = () => (
+    <Modal 
+      isOpen={showChartsModal} 
+      onClose={() => setShowChartsModal(false)} 
+      title="Usage Analytics & Charts"
+      maxWidth="max-w-6xl"
+    >
+      <div className="space-y-6">
+        {/* Chart Controls */}
+        <div className="flex justify-between items-center">
+          <h4 className="text-lg font-semibold text-white">System Analytics</h4>
+          <div className="flex items-center space-x-3">
+            <select
+              value={selectedChartMeter}
+              onChange={(e) => setSelectedChartMeter(e.target.value)}
+              className="input-field text-sm"
+            >
+              <option value="all">All Meters</option>
+              {meters.map(meter => (
+                <option key={meter.device_id} value={meter.device_id}>
+                  {meter.device_id}
+                </option>
+              ))}
+            </select>
+            <select
+              value={chartPeriod}
+              onChange={(e) => setChartPeriod(e.target.value)}
+              className="input-field text-sm"
+            >
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Main Usage Chart */}
+        <div className="glass rounded-xl p-6">
+          <h5 className="text-white font-medium mb-4">Usage Analytics</h5>
+          {chartLoading ? (
+            <div className="h-80 flex items-center justify-center">
+              <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+            </div>
+          ) : (
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                  <XAxis 
+                    dataKey="period" 
+                    stroke="#94a3b8"
+                    fontSize={12}
+                  />
+                  <YAxis stroke="#94a3b8" fontSize={12} />
+                  <Tooltip 
+                    contentStyle={{
+                      backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                      border: '1px solid rgba(103, 122, 229, 0.3)',
+                      borderRadius: '8px',
+                      color: '#f1f5f9'
+                    }}
+                  />
+                  <Legend />
+                  <Line 
+                    type="monotone" 
+                    dataKey="avg_usage" 
+                    stroke="#677AE5" 
+                    strokeWidth={2}
+                    name="Avg Usage (kW)"
+                    dot={{ fill: '#677AE5', strokeWidth: 2, r: 4 }}
+                  />
+                  <Line 
+                    type="monotone" 
+                    dataKey="units_purchased" 
+                    stroke="#10B981" 
+                    strokeWidth={2}
+                    name="Units Purchased"
+                    dot={{ fill: '#10B981', strokeWidth: 2, r: 4 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+
+        {/* Secondary Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Transaction Volume Chart */}
+          <div className="glass rounded-xl p-6">
+            <h5 className="text-white font-medium mb-4">Transaction Volume</h5>
+            {chartLoading ? (
+              <div className="h-64 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
+              </div>
+            ) : (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                    <XAxis dataKey="period" stroke="#94a3b8" fontSize={12} />
+                    <YAxis stroke="#94a3b8" fontSize={12} />
+                    <Tooltip 
+                      contentStyle={{
+                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                        border: '1px solid rgba(103, 122, 229, 0.3)',
+                        borderRadius: '8px',
+                        color: '#f1f5f9'
+                      }}
+                    />
+                    <Bar dataKey="transaction_count" fill="#677AE5" name="Transactions" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* Units Overview Chart */}
+          <div className="glass rounded-xl p-6">
+            <h5 className="text-white font-medium mb-4">Units Overview</h5>
+            {chartLoading ? (
+              <div className="h-64 flex items-center justify-center">
+                <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
+              </div>
+            ) : (
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                    <XAxis dataKey="period" stroke="#94a3b8" fontSize={12} />
+                    <YAxis stroke="#94a3b8" fontSize={12} />
+                    <Tooltip 
+                      contentStyle={{
+                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                        border: '1px solid rgba(103, 122, 229, 0.3)',
+                        borderRadius: '8px',
+                        color: '#f1f5f9'
+                      }}
+                    />
+                    <Bar dataKey="units_purchased" fill="#10B981" name="Units Purchased" />
+                    <Bar dataKey="units_deducted" fill="#EF4444" name="Units Deducted" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Chart Summary */}
+        <div className="glass rounded-xl p-6">
+          <h5 className="text-white font-medium mb-4">Summary Statistics</h5>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="text-center">
+              <div className="text-2xl font-bold text-white">
+                {chartData.reduce((sum, item) => sum + (item.avg_usage || 0), 0).toFixed(1)}
+              </div>
+              <div className="text-slate-400 text-sm">Total Avg Usage</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-green-400">
+                {chartData.reduce((sum, item) => sum + (item.units_purchased || 0), 0)}
+              </div>
+              <div className="text-slate-400 text-sm">Units Purchased</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-red-400">
+                {chartData.reduce((sum, item) => sum + (item.units_deducted || 0), 0)}
+              </div>
+              <div className="text-slate-400 text-sm">Units Deducted</div>
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-bold text-blue-400">
+                {chartData.reduce((sum, item) => sum + (item.transaction_count || 0), 0)}
+              </div>
+              <div className="text-slate-400 text-sm">Total Transactions</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
   const AdminTopupModal = () => (
     <Modal 
       isOpen={showTopupModal} 
@@ -359,46 +530,32 @@ const AdminPortal = () => {
       {selectedMeter && (
         <div className="space-y-6">
           {/* Meter Information */}
-          <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4">
-            <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Meter Information</h4>
+          <div className="glass rounded-lg p-4">
+            <h4 className="font-semibold text-white mb-2">Meter Information</h4>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <span className="text-gray-600 dark:text-gray-400">Device ID:</span>
-                <p className="font-medium text-gray-900 dark:text-white">{selectedMeter.device_id}</p>
+                <span className="text-slate-400">Device ID:</span>
+                <p className="font-medium text-white">{selectedMeter.device_id}</p>
               </div>
               <div>
-                <span className="text-gray-600 dark:text-gray-400">Current Usage:</span>
-                <p className="font-medium text-gray-900 dark:text-white">{selectedMeter.kw_usage || 0} kW</p>
+                <span className="text-slate-400">Current Usage:</span>
+                <p className="font-medium text-white">{selectedMeter.kw_usage || 0} kW</p>
               </div>
               <div>
-                <span className="text-gray-600 dark:text-gray-400">Units Left:</span>
-                <p className="font-medium text-gray-900 dark:text-white">{selectedMeter.units_left || 0} units</p>
+                <span className="text-slate-400">Units Left:</span>
+                <p className="font-medium text-white">{selectedMeter.units_left || 0} units</p>
               </div>
               <div>
-                <span className="text-gray-600 dark:text-gray-400">Pending Units:</span>
-                <p className="font-medium text-gray-900 dark:text-white">{selectedMeter.pending_units || 0} units</p>
+                <span className="text-slate-400">Pending Units:</span>
+                <p className="font-medium text-white">{selectedMeter.pending_units || 0} units</p>
               </div>
             </div>
           </div>
 
-          {/* Assigned Users */}
-          {meterDetails && meterDetails.assigned_users && meterDetails.assigned_users.length > 0 && (
-            <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-4">
-              <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Assigned Users</h4>
-              <div className="space-y-1">
-                {meterDetails.assigned_users.map((user, index) => (
-                  <div key={index} className="text-sm text-gray-700 dark:text-gray-300">
-                    {user.name} (@{user.username}) - {user.nickname || 'No nickname'}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Top-up Form */}
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
                 Units Amount
               </label>
               <input
@@ -406,24 +563,24 @@ const AdminPortal = () => {
                 value={topupData.units}
                 onChange={(e) => setTopupData(prev => ({ ...prev, units: e.target.value }))}
                 placeholder="Enter amount (positive to add, negative to deduct)"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                className="input-field w-full"
                 min="-10000"
                 max="10000"
               />
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              <p className="text-xs text-slate-400 mt-1">
                 Range: -10,000 to +10,000 units. Use negative values for deductions.
               </p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
                 Admin Notes (Optional)
               </label>
               <textarea
                 value={topupData.notes}
                 onChange={(e) => setTopupData(prev => ({ ...prev, notes: e.target.value }))}
                 placeholder="Enter reason for this adjustment..."
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                className="input-field w-full"
                 rows="3"
                 maxLength="500"
               />
@@ -431,7 +588,7 @@ const AdminPortal = () => {
 
             {/* Quick Amount Buttons */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="block text-sm font-medium text-slate-300 mb-2">
                 Quick Amounts
               </label>
               <div className="grid grid-cols-4 gap-2">
@@ -439,7 +596,7 @@ const AdminPortal = () => {
                   <button
                     key={amount}
                     onClick={() => setTopupData(prev => ({ ...prev, units: amount.toString() }))}
-                    className="px-3 py-2 text-sm bg-green-100 hover:bg-green-200 dark:bg-green-800 dark:hover:bg-green-700 text-green-800 dark:text-green-200 rounded-md transition-colors"
+                    className="px-3 py-2 text-sm glass-button hover:bg-green-500/20 text-green-400 rounded-lg transition-colors"
                   >
                     +{amount}
                   </button>
@@ -450,7 +607,7 @@ const AdminPortal = () => {
                   <button
                     key={amount}
                     onClick={() => setTopupData(prev => ({ ...prev, units: amount.toString() }))}
-                    className="px-3 py-2 text-sm bg-red-100 hover:bg-red-200 dark:bg-red-800 dark:hover:bg-red-700 text-red-800 dark:text-red-200 rounded-md transition-colors"
+                    className="px-3 py-2 text-sm glass-button hover:bg-red-500/20 text-red-400 rounded-lg transition-colors"
                   >
                     {amount}
                   </button>
@@ -460,7 +617,7 @@ const AdminPortal = () => {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex gap-3 pt-4 border-t border-gray-200 dark:border-gray-600">
+          <div className="flex gap-3 pt-4 border-t border-white/10">
             <button
               onClick={() => {
                 setShowTopupModal(false);
@@ -468,14 +625,14 @@ const AdminPortal = () => {
                 setMeterDetails(null);
                 setTopupData({ units: '', notes: '' });
               }}
-              className="flex-1 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded-md hover:bg-gray-400 dark:hover:bg-gray-500 transition-colors"
+              className="btn-secondary flex-1"
             >
               Cancel
             </button>
             <button
               onClick={handleAdminTopup}
               disabled={processingTopup || !topupData.units}
-              className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+              className="btn-primary flex-1 flex items-center justify-center"
             >
               {processingTopup ? (
                 <>
@@ -500,46 +657,34 @@ const AdminPortal = () => {
       {selectedUser && (
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Username
-            </label>
-            <p className="text-gray-900 dark:text-white">{selectedUser.username}</p>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Username</label>
+            <p className="text-white">{selectedUser.username}</p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Name
-            </label>
-            <p className="text-gray-900 dark:text-white">{selectedUser.name}</p>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Name</label>
+            <p className="text-white">{selectedUser.name}</p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Email
-            </label>
-            <p className="text-gray-900 dark:text-white">{selectedUser.email || 'Not provided'}</p>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+            <p className="text-white">{selectedUser.email || 'Not provided'}</p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Meters
-            </label>
-            <p className="text-gray-900 dark:text-white">{selectedUser.meter_count} meters</p>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Meters</label>
+            <p className="text-white">{selectedUser.meter_count} meters</p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Role
-            </label>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Role</label>
             <span className={`px-2 py-1 rounded-full text-xs font-medium ${
               selectedUser.is_admin 
-                ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300'
-                : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+                ? 'bg-purple-500/20 text-purple-400'
+                : 'bg-slate-700 text-slate-300'
             }`}>
               {selectedUser.is_admin ? 'Admin' : 'User'}
             </span>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Created
-            </label>
-            <p className="text-gray-900 dark:text-white">
+            <label className="block text-sm font-medium text-slate-300 mb-1">Created</label>
+            <p className="text-white">
               {new Date(selectedUser.created_at).toLocaleDateString()}
             </p>
           </div>
@@ -555,28 +700,26 @@ const AdminPortal = () => {
       <Modal isOpen={showMeterModal} onClose={() => setShowMeterModal(false)} title="Create New Meter">
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Device ID
-            </label>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Device ID</label>
             <input
               type="text"
               value={newDeviceId}
               onChange={(e) => setNewDeviceId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+              className="input-field w-full"
               placeholder="Enter device ID (e.g., METER001)"
             />
           </div>
           <div className="flex gap-3 pt-4">
             <button
-              onClick={() => createMeter(newDeviceId)}
+              onClick={() => handleCreateMeter(newDeviceId)}
               disabled={!newDeviceId}
-              className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="btn-primary flex-1"
             >
               Create Meter
             </button>
             <button
               onClick={() => setShowMeterModal(false)}
-              className="flex-1 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded-md hover:bg-gray-400 dark:hover:bg-gray-500 transition-colors"
+              className="btn-secondary flex-1"
             >
               Cancel
             </button>
@@ -590,18 +733,43 @@ const AdminPortal = () => {
     const [selectedUserId, setSelectedUserId] = useState('');
     const [selectedMeterDevice, setSelectedMeterDevice] = useState('');
     const [nickname, setNickname] = useState('');
+    const [assignmentError, setAssignmentError] = useState('');
+    
+    const handleAssignSubmit = async () => {
+      if (!selectedUserId || !selectedMeterDevice) {
+        setAssignmentError('Please select both user and meter');
+        return;
+      }
+
+      // Client-side validation: Check if meter is already assigned
+      const isAssigned = meters.some(meter => 
+        meter.device_id === selectedMeterDevice && meter.user_count > 0
+      );
+
+      if (isAssigned) {
+        setAssignmentError('This meter is already assigned to another user. Please choose an unassigned meter.');
+        return;
+      }
+
+      setAssignmentError('');
+      await handleAssignMeter(selectedUserId, selectedMeterDevice, nickname);
+    };
     
     return (
       <Modal isOpen={showAssignModal} onClose={() => setShowAssignModal(false)} title="Assign Meter to User">
         <div className="space-y-4">
+          {assignmentError && (
+            <div className="p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-sm">
+              {assignmentError}
+            </div>
+          )}
+          
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Select User
-            </label>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Select User</label>
             <select
               value={selectedUserId}
               onChange={(e) => setSelectedUserId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+              className="input-field w-full"
             >
               <option value="">Choose a user...</option>
               {users.map(user => (
@@ -611,46 +779,48 @@ const AdminPortal = () => {
               ))}
             </select>
           </div>
+          
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Select Meter
-            </label>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Select Meter</label>
             <select
               value={selectedMeterDevice}
               onChange={(e) => setSelectedMeterDevice(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+              className="input-field w-full"
             >
               <option value="">Choose a meter...</option>
               {unassignedMeters?.map(meter => (
                 <option key={meter.device_id} value={meter.device_id}>
-                  {meter.device_id}
+                  {meter.device_id} (Unassigned)
                 </option>
               )) || []}
             </select>
+            <p className="text-xs text-slate-400 mt-1">
+              Only unassigned meters are shown. Assigned meters: {meters.filter(m => m.user_count > 0).length}
+            </p>
           </div>
+          
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Nickname (Optional)
-            </label>
+            <label className="block text-sm font-medium text-slate-300 mb-1">Nickname (Optional)</label>
             <input
               type="text"
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+              className="input-field w-full"
               placeholder="e.g., Home Meter, Office Meter"
             />
           </div>
+          
           <div className="flex gap-3 pt-4">
             <button
-              onClick={() => assignMeter(selectedUserId, selectedMeterDevice, nickname)}
+              onClick={handleAssignSubmit}
               disabled={!selectedUserId || !selectedMeterDevice}
-              className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="btn-primary flex-1"
             >
               Assign Meter
             </button>
             <button
               onClick={() => setShowAssignModal(false)}
-              className="flex-1 bg-gray-300 dark:bg-gray-600 text-gray-700 dark:text-gray-300 px-4 py-2 rounded-md hover:bg-gray-400 dark:hover:bg-gray-500 transition-colors"
+              className="btn-secondary flex-1"
             >
               Cancel
             </button>
@@ -660,117 +830,145 @@ const AdminPortal = () => {
     );
   };
 
-  const DataTable = ({ columns, data, onRowClick }) => (
-    <div className="overflow-x-auto">
-      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-        <thead className="bg-gray-50 dark:bg-gray-700">
-          <tr>
-            {columns.map((column, index) => (
-              <th
-                key={index}
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
-              >
-                {column.header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-          {data.map((row, rowIndex) => (
-            <tr
-              key={rowIndex}
-              onClick={() => onRowClick && onRowClick(row)}
-              className={onRowClick ? "cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700" : ""}
-            >
-              {columns.map((column, colIndex) => (
-                <td key={colIndex} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
-                  {column.render ? column.render(row) : row[column.key]}
-                </td>
+  const DataTable = ({ columns, data, onRowClick, isLoading = false }) => (
+    <div className="glass rounded-xl overflow-hidden">
+      {isLoading ? (
+        <div className="p-8 text-center">
+          <Loader2 className="w-8 h-8 animate-spin text-primary-500 mx-auto mb-4" />
+          <p className="text-slate-400">Loading data...</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full">
+            <thead className="bg-white/5">
+              <tr>
+                {columns.map((column, index) => (
+                  <th
+                    key={index}
+                    className="px-6 py-3 text-left text-xs font-medium text-slate-300 uppercase tracking-wider"
+                  >
+                    {column.header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/10">
+              {data.map((row, rowIndex) => (
+                <motion.tr
+                  key={rowIndex}
+                  whileHover={{ backgroundColor: "rgba(255, 255, 255, 0.02)" }}
+                  onClick={() => onRowClick && onRowClick(row)}
+                  className={onRowClick ? "cursor-pointer" : ""}
+                >
+                  {columns.map((column, colIndex) => (
+                    <td key={colIndex} className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
+                      {column.render ? column.render(row) : row[column.key]}
+                    </td>
+                  ))}
+                </motion.tr>
               ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 
-  // Dashboard content
+  // Dashboard content - keeping it simple like the original
   const DashboardContent = () => (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="Total Users"
-          value={stats.total_users?.toLocaleString() || '0'}
+          value={stats.total_users}
           icon={Users}
           color="bg-blue-600"
           trend="+12% from last month"
+          loading={loading}
         />
         <StatCard
           title="Total Meters"
-          value={stats.total_meters?.toLocaleString() || '0'}
+          value={stats.total_meters}
           icon={Zap}
           color="bg-green-600"
           trend="+5% from last month"
+          loading={loading}
         />
         <StatCard
           title="Total Transactions"
-          value={stats.total_transactions?.toLocaleString() || '0'}
+          value={stats.total_transactions}
           icon={Activity}
           color="bg-purple-600"
           trend="+18% from last month"
+          loading={loading}
         />
         <StatCard
           title="Units Sold Today"
-          value={stats.units_sold_today?.toLocaleString() || '0'}
+          value={stats.units_sold_today}
           icon={DollarSign}
           color="bg-orange-600"
           trend="+8% from yesterday"
+          loading={loading}
         />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Quick Stats</h3>
+        <div className="glass-card">
+          <h3 className="text-lg font-semibold text-white mb-4">Quick Stats</h3>
           <div className="space-y-3">
             <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Pending Transactions:</span>
-              <span className="font-medium text-orange-600">{stats.pending_transactions || 0}</span>
+              <span className="text-slate-400">Pending Transactions:</span>
+              <span className="font-medium text-orange-400">{stats.pending_transactions || 0}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Transactions Today:</span>
-              <span className="font-medium text-green-600">{stats.transactions_today || 0}</span>
+              <span className="text-slate-400">Transactions Today:</span>
+              <span className="font-medium text-green-400">{stats.transactions_today || 0}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Total Units Sold:</span>
-              <span className="font-medium text-blue-600">{stats.total_units_sold?.toLocaleString() || 0}</span>
+              <span className="text-slate-400">Total Units Sold:</span>
+              <span className="font-medium text-blue-400">{stats.total_units_sold?.toLocaleString() || 0}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600 dark:text-gray-400">Units Remaining:</span>
-              <span className="font-medium text-purple-600">{stats.total_units_remaining?.toLocaleString() || 0}</span>
+              <span className="text-slate-400">Units Remaining:</span>
+              <span className="font-medium text-purple-400">{stats.total_units_remaining?.toLocaleString() || 0}</span>
             </div>
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-sm border border-gray-200 dark:border-gray-700">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">System Health</h3>
+        <div className="glass-card">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold text-white">System Health</h3>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => setShowChartsModal(true)}
+              className="btn-primary flex items-center text-sm"
+            >
+              <BarChart3 className="w-4 h-4 mr-2" />
+              View Charts
+            </motion.button>
+          </div>
           <div className="space-y-4">
             <div className="flex items-center">
-              <CheckCircle className="w-5 h-5 text-green-500 mr-2" />
-              <span className="text-gray-700 dark:text-gray-300">API Status: Online</span>
+              <CheckCircle className="w-5 h-5 text-green-400 mr-2" />
+              <span className="text-slate-300">API Status: Online</span>
             </div>
             <div className="flex items-center">
-              <CheckCircle className="w-5 h-5 text-green-500 mr-2" />
-              <span className="text-gray-700 dark:text-gray-300">Database: Connected</span>
+              <CheckCircle className="w-5 h-5 text-green-400 mr-2" />
+              <span className="text-slate-300">Database: Connected</span>
             </div>
             <div className="flex items-center">
               {stats.pending_transactions > 0 ? (
-                <AlertTriangle className="w-5 h-5 text-yellow-500 mr-2" />
+                <AlertTriangle className="w-5 h-5 text-yellow-400 mr-2" />
               ) : (
-                <CheckCircle className="w-5 h-5 text-green-500 mr-2" />
+                <CheckCircle className="w-5 h-5 text-green-400 mr-2" />
               )}
-              <span className="text-gray-700 dark:text-gray-300">
+              <span className="text-slate-300">
                 Pending Queue: {stats.pending_transactions || 0} items
               </span>
+            </div>
+            <div className="pt-2 border-t border-white/10">
+              <ConnectionStatus />
             </div>
           </div>
         </div>
@@ -786,8 +984,8 @@ const AdminPortal = () => {
         key: 'name',
         render: (user) => (
           <div>
-            <div className="font-medium text-gray-900 dark:text-white">{user.name}</div>
-            <div className="text-gray-500 dark:text-gray-400">@{user.username}</div>
+            <div className="font-medium text-white">{user.name}</div>
+            <div className="text-slate-400">@{user.username}</div>
           </div>
         )
       },
@@ -802,8 +1000,8 @@ const AdminPortal = () => {
         render: (user) => (
           <span className={`px-2 py-1 rounded-full text-xs font-medium ${
             user.is_admin 
-              ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300'
-              : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300'
+              ? 'bg-purple-500/20 text-purple-400'
+              : 'bg-slate-700 text-slate-300'
           }`}>
             {user.is_admin ? 'Admin' : 'User'}
           </span>
@@ -813,7 +1011,7 @@ const AdminPortal = () => {
         header: 'Meters',
         key: 'meter_count',
         render: (user) => (
-          <span className="px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300 rounded-full text-xs font-medium">
+          <span className="px-2 py-1 bg-blue-500/20 text-blue-400 rounded-full text-xs font-medium">
             {user.meter_count} meters
           </span>
         )
@@ -834,54 +1032,51 @@ const AdminPortal = () => {
     return (
       <div className="space-y-6">
         <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">User Management</h2>
+          <h2 className="text-2xl font-bold text-white">User Management</h2>
           <div className="flex gap-3">
             <div className="relative">
-              <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 placeholder="Search users..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                className="input-field pl-10"
               />
             </div>
-            <button
-              onClick={fetchUsers}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center"
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={manualRefresh}
+              className="btn-secondary flex items-center"
             >
               <RefreshCw className="w-4 h-4 mr-2" />
               Refresh
-            </button>
+            </motion.button>
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          {loading ? (
-            <div className="p-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
-          ) : (
-            <DataTable
-              columns={userColumns}
-              data={filteredUsers}
-              onRowClick={(user) => {
-                setSelectedUser(user);
-                setShowUserModal(true);
-              }}
-            />
-          )}
-        </div>
+        <DataTable
+          columns={userColumns}
+          data={filteredUsers}
+          onRowClick={(user) => {
+            setSelectedUser(user);
+            setShowUserModal(true);
+          }}
+          isLoading={loading}
+        />
       </div>
     );
   };
 
-  // Meters management content - WITH Top-up functionality
+  // Meters management content
   const MetersContent = () => {
     const meterColumns = [
       {
         header: 'Device ID',
         key: 'device_id',
         render: (meter) => (
-          <div className="font-medium text-gray-900 dark:text-white">{meter.device_id}</div>
+          <div className="font-medium text-white">{meter.device_id}</div>
         )
       },
       {
@@ -895,10 +1090,10 @@ const AdminPortal = () => {
         render: (meter) => (
           <span className={`px-2 py-1 rounded-full text-xs font-medium ${
             meter.units_left > 50 
-              ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+              ? 'bg-green-500/20 text-green-400'
               : meter.units_left > 20
-                ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300'
-                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
+                ? 'bg-yellow-500/20 text-yellow-400'
+                : 'bg-red-500/20 text-red-400'
           }`}>
             {meter.units_left || 0} units
           </span>
@@ -924,7 +1119,9 @@ const AdminPortal = () => {
         key: 'actions',
         render: (meter) => (
           <div className="flex gap-2">
-            <button
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={(e) => {
                 e.stopPropagation();
                 openTopupModal(meter);
@@ -934,18 +1131,20 @@ const AdminPortal = () => {
             >
               <CreditCard className="w-3 h-3 mr-1" />
               Top-up
-            </button>
-            <button
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={(e) => {
                 e.stopPropagation();
-                // You can add view details functionality here
+                setShowChartsModal(true);
               }}
-              className="bg-gray-600 text-white px-3 py-1 rounded text-xs hover:bg-gray-700 transition-colors flex items-center"
-              title="View Details"
+              className="bg-slate-600 text-white px-3 py-1 rounded text-xs hover:bg-slate-700 transition-colors flex items-center"
+              title="View Analytics"
             >
-              <Eye className="w-3 h-3 mr-1" />
-              View
-            </button>
+              <BarChart3 className="w-3 h-3 mr-1" />
+              Charts
+            </motion.button>
           </div>
         )
       }
@@ -958,69 +1157,77 @@ const AdminPortal = () => {
     return (
       <div className="space-y-6">
         <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Meter Management</h2>
+          <h2 className="text-2xl font-bold text-white">Meter Management</h2>
           <div className="flex gap-3">
             <div className="relative">
-              <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <Search className="w-5 h-5 absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 placeholder="Search meters..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                className="input-field pl-10"
               />
             </div>
-            <button
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => setShowAssignModal(true)}
-              className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center"
+              className="btn-primary flex items-center"
             >
               <UserPlus className="w-4 h-4 mr-2" />
               Assign Meter
-            </button>
-            <button
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => setShowMeterModal(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center"
+              className="btn-secondary flex items-center"
             >
               <Plus className="w-4 h-4 mr-2" />
               Create Meter
-            </button>
-            <button
-              onClick={() => {
-                fetchMeters();
-                fetchUnassignedMeters();
-              }}
-              className="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors flex items-center"
+            </motion.button>
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={manualRefresh}
+              className="btn-secondary flex items-center"
             >
               <RefreshCw className="w-4 h-4 mr-2" />
               Refresh
-            </button>
+            </motion.button>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Total Meters</h3>
-            <p className="text-2xl font-bold text-blue-600">{meters.length}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Unassigned</h3>
-            <p className="text-2xl font-bold text-orange-600">{unassignedMeters?.length || 0}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Low Units</h3>
-            <p className="text-2xl font-bold text-red-600">
-              {meters.filter(m => (m.units_left || 0) < 20).length}
-            </p>
-          </div>
+          <StatCard
+            title="Total Meters"
+            value={meters.length}
+            icon={Zap}
+            color="bg-blue-600"
+            loading={loading}
+          />
+          <StatCard
+            title="Unassigned"
+            value={unassignedMeters?.length || 0}
+            icon={AlertTriangle}
+            color="bg-orange-600"
+            loading={loading}
+          />
+          <StatCard
+            title="Low Units"
+            value={meters.filter(m => (m.units_left || 0) < 20).length}
+            icon={AlertTriangle}
+            color="bg-red-600"
+            loading={loading}
+          />
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          {loading ? (
-            <div className="p-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
-          ) : (
-            <DataTable columns={meterColumns} data={filteredMeters} />
-          )}
-        </div>
+        <DataTable 
+          columns={meterColumns} 
+          data={filteredMeters} 
+          isLoading={loading}
+        />
       </div>
     );
   };
@@ -1037,8 +1244,8 @@ const AdminPortal = () => {
         key: 'user_name',
         render: (transaction) => (
           <div>
-            <div className="font-medium text-gray-900 dark:text-white">{transaction.user_name}</div>
-            <div className="text-gray-500 dark:text-gray-400">@{transaction.username}</div>
+            <div className="font-medium text-white">{transaction.user_name}</div>
+            <div className="text-slate-400">@{transaction.username}</div>
           </div>
         )
       },
@@ -1047,9 +1254,9 @@ const AdminPortal = () => {
         key: 'device_id',
         render: (transaction) => (
           <div>
-            <div className="font-medium text-gray-900 dark:text-white">{transaction.device_id}</div>
+            <div className="font-medium text-white">{transaction.device_id}</div>
             {transaction.nickname && (
-              <div className="text-gray-500 dark:text-gray-400">{transaction.nickname}</div>
+              <div className="text-slate-400">{transaction.nickname}</div>
             )}
           </div>
         )
@@ -1060,8 +1267,8 @@ const AdminPortal = () => {
         render: (transaction) => (
           <span className={`px-2 py-1 rounded-full text-xs font-medium ${
             transaction.is_negative
-              ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
-              : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+              ? 'bg-red-500/20 text-red-400'
+              : 'bg-green-500/20 text-green-400'
           }`}>
             {transaction.is_negative ? '-' : '+'}{Math.abs(transaction.units)} units
           </span>
@@ -1073,10 +1280,10 @@ const AdminPortal = () => {
         render: (transaction) => (
           <span className={`px-2 py-1 rounded-full text-xs font-medium ${
             transaction.status === 'completed'
-              ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+              ? 'bg-green-500/20 text-green-400'
               : transaction.status === 'pending'
-                ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300'
-                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
+                ? 'bg-yellow-500/20 text-yellow-400'
+                : 'bg-red-500/20 text-red-400'
           }`}>
             {transaction.status}
           </span>
@@ -1091,7 +1298,9 @@ const AdminPortal = () => {
         key: 'actions',
         render: (transaction) => (
           transaction.status === 'pending' && (
-            <button
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={(e) => {
                 e.stopPropagation();
                 completeTransaction(transaction.id);
@@ -1099,7 +1308,7 @@ const AdminPortal = () => {
               className="bg-green-600 text-white px-3 py-1 rounded text-xs hover:bg-green-700 transition-colors"
             >
               Complete
-            </button>
+            </motion.button>
           )
         )
       }
@@ -1108,99 +1317,94 @@ const AdminPortal = () => {
     return (
       <div className="space-y-6">
         <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Transaction Management</h2>
+          <h2 className="text-2xl font-bold text-white">Transaction Management</h2>
           <div className="flex gap-3">
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+              className="input-field"
             >
               <option value="all">All Status</option>
               <option value="pending">Pending</option>
               <option value="completed">Completed</option>
               <option value="failed">Failed</option>
             </select>
-            <button
-              onClick={fetchTransactions}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center"
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={manualRefresh}
+              className="btn-secondary flex items-center"
             >
               <RefreshCw className="w-4 h-4 mr-2" />
               Refresh
-            </button>
+            </motion.button>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center">
-              <Activity className="w-8 h-8 text-blue-600 mr-3" />
-              <div>
-                <h3 className="text-sm font-medium text-gray-600 dark:text-gray-400">Total</h3>
-                <p className="text-xl font-bold text-gray-900 dark:text-white">{stats.total_transactions || 0}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center">
-              <Clock className="w-8 h-8 text-yellow-600 mr-3" />
-              <div>
-                <h3 className="text-sm font-medium text-gray-600 dark:text-gray-400">Pending</h3>
-                <p className="text-xl font-bold text-gray-900 dark:text-white">{stats.pending_transactions || 0}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center">
-              <CheckCircle className="w-8 h-8 text-green-600 mr-3" />
-              <div>
-                <h3 className="text-sm font-medium text-gray-600 dark:text-gray-400">Today</h3>
-                <p className="text-xl font-bold text-gray-900 dark:text-white">{stats.transactions_today || 0}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center">
-              <DollarSign className="w-8 h-8 text-purple-600 mr-3" />
-              <div>
-                <h3 className="text-sm font-medium text-gray-600 dark:text-gray-400">Units Sold</h3>
-                <p className="text-xl font-bold text-gray-900 dark:text-white">{stats.total_units_sold?.toLocaleString() || 0}</p>
-              </div>
-            </div>
-          </div>
+          <StatCard
+            title="Total"
+            value={stats.total_transactions}
+            icon={Activity}
+            color="bg-blue-600"
+            loading={loading}
+          />
+          <StatCard
+            title="Pending"
+            value={stats.pending_transactions}
+            icon={Clock}
+            color="bg-yellow-600"
+            loading={loading}
+          />
+          <StatCard
+            title="Today"
+            value={stats.transactions_today}
+            icon={CheckCircle}
+            color="bg-green-600"
+            loading={loading}
+          />
+          <StatCard
+            title="Units Sold"
+            value={stats.total_units_sold}
+            icon={DollarSign}
+            color="bg-purple-600"
+            loading={loading}
+          />
         </div>
 
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700">
-          {loading ? (
-            <div className="p-8 text-center text-gray-500 dark:text-gray-400">Loading...</div>
-          ) : (
-            <>
-              <DataTable columns={transactionColumns} data={transactions} />
-              {pagination.total > pagination.limit && (
-                <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-between items-center">
-                  <span className="text-sm text-gray-700 dark:text-gray-300">
-                    Showing {pagination.offset + 1} to {Math.min(pagination.offset + pagination.limit, pagination.total)} of {pagination.total} results
-                  </span>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setPagination(prev => ({ ...prev, offset: Math.max(0, prev.offset - prev.limit) }))}
-                      disabled={pagination.offset === 0}
-                      className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      onClick={() => setPagination(prev => ({ ...prev, offset: prev.offset + prev.limit }))}
-                      disabled={pagination.offset + pagination.limit >= pagination.total}
-                      className="px-3 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+        <DataTable 
+          columns={transactionColumns} 
+          data={transactions} 
+          isLoading={loading}
+        />
+
+        {pagination.total > pagination.limit && (
+          <div className="glass-card p-4 flex justify-between items-center">
+            <span className="text-sm text-slate-300">
+              Showing {pagination.offset + 1} to {Math.min(pagination.offset + pagination.limit, pagination.total)} of {pagination.total} results
+            </span>
+            <div className="flex gap-2">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setPagination(prev => ({ ...prev, offset: Math.max(0, prev.offset - prev.limit) }))}
+                disabled={pagination.offset === 0}
+                className="btn-secondary text-sm disabled:opacity-50"
+              >
+                Previous
+              </motion.button>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setPagination(prev => ({ ...prev, offset: prev.offset + prev.limit }))}
+                disabled={pagination.offset + pagination.limit >= pagination.total}
+                className="btn-secondary text-sm disabled:opacity-50"
+              >
+                Next
+              </motion.button>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -1209,33 +1413,69 @@ const AdminPortal = () => {
     { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
     { id: 'users', label: 'Users', icon: Users },
     { id: 'meters', label: 'Meters', icon: Zap },
-    { id: 'transactions', label: 'Transactions', icon: Activity },
+    { id: 'transactions', label: 'Transactions', icon: Activity, badge: stats.pending_transactions > 0 ? stats.pending_transactions : null },
   ];
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center py-4">
-            <div className="flex items-center">
-              <Settings className="w-8 h-8 text-blue-600 mr-3" />
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Admin Portal</h1>
-            </div>
+    <div className="min-h-screen bg-dark-950">
+      {/* Header */}
+      <motion.nav 
+        initial={{ y: -50, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        className="glass border-b border-white/10 sticky top-0 z-50"
+      >
+        <div className="max-w-7xl mx-auto px-6 py-4">
+          <div className="flex justify-between items-center">
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-600 dark:text-gray-400">Smart Meter Management System</span>
-              <button
+              <div className="w-10 h-10 bg-gradient-to-br from-primary-500 to-primary-600 rounded-xl flex items-center justify-center glow-primary">
+                <Settings className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">Admin Portal</h1>
+                <p className="text-slate-400 text-sm">Smart Meter Management System</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center space-x-4">
+              <ConnectionStatus />
+              
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={toggleAutoRefresh}
+                className={`glass-button p-3 ${isAutoRefreshActive ? 'text-green-400' : 'text-slate-400'}`}
+                title={isAutoRefreshActive ? 'Disable auto-refresh' : 'Enable auto-refresh'}
+              >
+                {isAutoRefreshActive ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+              </motion.button>
+              
+              <motion.button
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={manualRefresh}
+                disabled={loading}
+                className="glass-button p-3"
+                title="Manual refresh"
+              >
+                <RefreshCw className={`w-5 h-5 text-slate-300 ${loading ? 'animate-spin' : ''}`} />
+              </motion.button>
+              
+              <motion.button
                 onClick={logout}
-                className="flex items-center space-x-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                className="btn-secondary flex items-center space-x-2"
               >
                 <LogOut className="w-4 h-4" />
                 <span>Logout</span>
-              </button>
+              </motion.button>
             </div>
           </div>
         </div>
-      </div>
+      </motion.nav>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        {/* Tabs */}
         <div className="flex flex-wrap gap-2 mb-8">
           {tabs.map((tab) => (
             <TabButton
@@ -1245,22 +1485,36 @@ const AdminPortal = () => {
               icon={tab.icon}
               isActive={activeTab === tab.id}
               onClick={setActiveTab}
+              badge={tab.badge}
             />
           ))}
         </div>
 
-        {activeTab === 'dashboard' && <DashboardContent />}
-        {activeTab === 'users' && <UsersContent />}
-        {activeTab === 'meters' && <MetersContent />}
-        {activeTab === 'transactions' && <TransactionsContent />}
+        {/* Content */}
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -20 }}
+            transition={{ duration: 0.3 }}
+          >
+            {activeTab === 'dashboard' && <DashboardContent />}
+            {activeTab === 'users' && <UsersContent />}
+            {activeTab === 'meters' && <MetersContent />}
+            {activeTab === 'transactions' && <TransactionsContent />}
+          </motion.div>
+        </AnimatePresence>
 
+        {/* Modals */}
         <UserModal />
         <MeterModal />
         <AssignMeterModal />
         <AdminTopupModal />
+        <ChartsModal />
       </div>
     </div>
   );
 };
 
-export default AdminPortal;
+export default AdminDashboard;

@@ -140,12 +140,29 @@ export const adminAPI = {
     return response.data;
   },
   
+  getRefreshData: async () => {
+    const response = await api.get('/admin/refresh-data');
+    return response.data;
+  },
+  
+  getUsageAnalytics: async (period = 'weekly', meterId = 'all') => {
+    const response = await api.get('/admin/usage-analytics', { 
+      params: { period, meter_id: meterId } 
+    });
+    return response.data;
+  },
+  
   getUserMeters: async (userId) => {
     const response = await api.get(`/admin/users/${userId}/meters`);
     return response.data;
   },
   
   assignMeter: async (assignmentData) => {
+    const response = await api.post('/admin/assign-meter', assignmentData);
+    return response.data;
+  },
+  
+  assignMeterWithValidation: async (assignmentData) => {
     const response = await api.post('/admin/assign-meter', assignmentData);
     return response.data;
   },

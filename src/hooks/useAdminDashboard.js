@@ -1,4 +1,4 @@
-// Create this as src/hooks/useAdminDashboard.js
+// Fixed version of src/hooks/useAdminDashboard.js with stable dependencies
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { adminAPI } from '../services/api';
@@ -25,32 +25,103 @@ export const useAdminDashboard = () => {
   const [chartLoading, setChartLoading] = useState(false);
   const [selectedChartMeter, setSelectedChartMeter] = useState('all');
 
+  // Modal and interaction state - using refs to avoid dependency issues
+  const activeModalsRef = useRef(new Set());
+  const userInteractingRef = useRef(false);
+  const userInteractionTimeoutRef = useRef(null);
+
   // Refs for intervals
   const refreshIntervalRef = useRef(null);
   const chartRefreshRef = useRef(null);
 
-  // Auto-refresh function
+  // Stable functions using useCallback with empty dependencies
+  const registerModal = useCallback((modalId) => {
+    activeModalsRef.current.add(modalId);
+    console.log('Modal registered:', modalId, 'Active modals:', Array.from(activeModalsRef.current));
+  }, []);
+
+  const unregisterModal = useCallback((modalId) => {
+    activeModalsRef.current.delete(modalId);
+    console.log('Modal unregistered:', modalId, 'Active modals:', Array.from(activeModalsRef.current));
+  }, []);
+
+  const setUserInteraction = useCallback((isInteracting) => {
+    userInteractingRef.current = isInteracting;
+    
+    // Clear existing timeout
+    if (userInteractionTimeoutRef.current) {
+      clearTimeout(userInteractionTimeoutRef.current);
+      userInteractionTimeoutRef.current = null;
+    }
+    
+    // If user started interacting, set a timeout to automatically reset after 30 seconds
+    if (isInteracting) {
+      userInteractionTimeoutRef.current = setTimeout(() => {
+        userInteractingRef.current = false;
+        console.log('User interaction timeout - resuming auto-refresh');
+      }, 30000);
+    }
+    
+    console.log('User interaction set to:', isInteracting);
+  }, []);
+
+  // Check if refresh should be paused
+  const shouldPauseRefresh = useCallback(() => {
+    const hasActiveModals = activeModalsRef.current.size > 0;
+    const isUserInteracting = userInteractingRef.current;
+    const shouldPause = hasActiveModals || isUserInteracting;
+    
+    if (shouldPause) {
+      console.log('Refresh paused - Active modals:', hasActiveModals, 'User interacting:', isUserInteracting);
+    }
+    
+    return shouldPause;
+  }, []);
+
+  // Modified auto-refresh function with pause capability
   const autoRefreshData = useCallback(async () => {
-    if (!isAutoRefreshActive) return;
+    if (!isAutoRefreshActive) {
+      return;
+    }
+
+    if (shouldPauseRefresh()) {
+      console.log('Auto-refresh paused due to active modals or user interaction');
+      return;
+    }
     
     try {
       setConnectionStatus('connecting');
       const data = await adminAPI.getRefreshData();
       
       if (data.success) {
-        setStats(data.stats);
-        setTransactions(data.recent_transactions);
+        // Use functional updates to prevent unnecessary re-renders
+        setStats(prevStats => {
+          // Only update if data actually changed
+          if (JSON.stringify(prevStats) !== JSON.stringify(data.stats)) {
+            return data.stats;
+          }
+          return prevStats;
+        });
+        
+        setTransactions(prevTransactions => {
+          // Only update if data actually changed
+          if (JSON.stringify(prevTransactions) !== JSON.stringify(data.recent_transactions)) {
+            return data.recent_transactions;
+          }
+          return prevTransactions;
+        });
+        
         setLastRefresh(new Date());
         setRefreshError(null);
         setConnectionStatus('connected');
         
-        // Show notification for critical meters
-        if (data.low_units_meters && data.low_units_meters.length > 0) {
+        // Show notification for critical meters (but only if no modals are open)
+        if (!shouldPauseRefresh() && data.low_units_meters && data.low_units_meters.length > 0) {
           const count = data.low_units_meters.length;
-          if (count > 3) { // Only show toast if many meters are critical
+          if (count > 3) {
             toast.warning(`⚠️ ${count} meters have critically low units`, {
               duration: 5000,
-              id: 'low-units-warning' // Prevent duplicate toasts
+              id: 'low-units-warning'
             });
           }
         }
@@ -62,24 +133,38 @@ export const useAdminDashboard = () => {
       setRefreshError(error.message);
       setConnectionStatus('error');
     }
-  }, [isAutoRefreshActive]);
+  }, [isAutoRefreshActive, shouldPauseRefresh]);
 
-  // Fetch chart data
+  // Fetch chart data with pause check
   const fetchChartData = useCallback(async () => {
+    // Don't fetch chart data if user is interacting with chart controls
+    if (userInteractingRef.current) {
+      console.log('Chart data fetch paused due to user interaction');
+      return;
+    }
+    
     setChartLoading(true);
     try {
       const data = await adminAPI.getUsageAnalytics(chartPeriod, selectedChartMeter);
       
       if (data.success) {
-        setChartData(data.chart_data);
+        setChartData(prevData => {
+          // Only update if data actually changed
+          if (JSON.stringify(prevData) !== JSON.stringify(data.chart_data)) {
+            return data.chart_data;
+          }
+          return prevData;
+        });
       }
     } catch (error) {
       console.error('Chart data fetch error:', error);
-      toast.error('Failed to load chart data');
+      if (!shouldPauseRefresh()) {
+        toast.error('Failed to load chart data');
+      }
     } finally {
       setChartLoading(false);
     }
-  }, [chartPeriod, selectedChartMeter]);
+  }, [chartPeriod, selectedChartMeter, shouldPauseRefresh]);
 
   // Fetch all data (for initial load and manual refresh)
   const fetchAllData = useCallback(async () => {
@@ -127,8 +212,10 @@ export const useAdminDashboard = () => {
       if (metersData.success) setMeters(metersData.meters);
       if (unassignedData.success) setUnassignedMeters(unassignedData.meters || []);
       
-      // Trigger auto-refresh
-      autoRefreshData();
+      // Trigger auto-refresh only if not paused
+      if (!shouldPauseRefresh()) {
+        autoRefreshData();
+      }
       
       return { success: true };
     } catch (error) {
@@ -136,7 +223,7 @@ export const useAdminDashboard = () => {
       toast.error(message);
       return { success: false, message };
     }
-  }, [autoRefreshData]);
+  }, [autoRefreshData, shouldPauseRefresh]);
 
   // Create new meter
   const createMeter = useCallback(async (deviceId) => {
@@ -179,9 +266,11 @@ export const useAdminDashboard = () => {
         const actionType = units < 0 ? 'deduction' : 'top-up';
         toast.success(`Admin ${actionType} successful! ${Math.abs(units)} units ${units < 0 ? 'deducted from' : 'added to'} ${deviceId}`);
         
-        // Refresh data
-        autoRefreshData();
-        fetchChartData();
+        // Refresh data only if not paused
+        if (!shouldPauseRefresh()) {
+          autoRefreshData();
+          fetchChartData();
+        }
         
         return { success: true };
       } else {
@@ -192,43 +281,62 @@ export const useAdminDashboard = () => {
       toast.error(message);
       return { success: false, message };
     }
-  }, [autoRefreshData, fetchChartData]);
+  }, [autoRefreshData, fetchChartData, shouldPauseRefresh]);
 
-  // Setup auto-refresh
+  // Setup auto-refresh with stable dependencies
   useEffect(() => {
-    if (isAutoRefreshActive) {
-      // Initial fetch
-      autoRefreshData();
-      
-      // Set up interval
-      refreshIntervalRef.current = setInterval(autoRefreshData, 30000); // 30 seconds
-      
-      return () => {
-        if (refreshIntervalRef.current) {
-          clearInterval(refreshIntervalRef.current);
-        }
-      };
+    if (!isAutoRefreshActive) {
+      return;
     }
-  }, [isAutoRefreshActive, autoRefreshData]);
 
-  // Setup chart refresh
+    // Initial fetch
+    autoRefreshData();
+    
+    // Set up interval
+    const intervalId = setInterval(() => {
+      autoRefreshData();
+    }, 30000); // 30 seconds
+    
+    refreshIntervalRef.current = intervalId;
+    
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [isAutoRefreshActive]); // Only depend on isAutoRefreshActive
+
+  // Setup chart refresh with stable dependencies
   useEffect(() => {
     fetchChartData();
     
     // Refresh chart data every 2 minutes
-    chartRefreshRef.current = setInterval(fetchChartData, 120000);
+    const intervalId = setInterval(() => {
+      fetchChartData();
+    }, 120000);
+    
+    chartRefreshRef.current = intervalId;
     
     return () => {
-      if (chartRefreshRef.current) {
-        clearInterval(chartRefreshRef.current);
+      if (intervalId) {
+        clearInterval(intervalId);
       }
     };
-  }, [fetchChartData]);
+  }, [chartPeriod, selectedChartMeter]); // Only depend on chart config
 
   // Initial data load
   useEffect(() => {
     fetchAllData();
-  }, [fetchAllData]);
+  }, []); // Empty dependency array for initial load only
+
+  // Cleanup interaction timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (userInteractionTimeoutRef.current) {
+        clearTimeout(userInteractionTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Toggle auto-refresh
   const toggleAutoRefresh = useCallback(() => {
@@ -277,6 +385,11 @@ export const useAdminDashboard = () => {
     // Chart state
     chartPeriod,
     selectedChartMeter,
+    
+    // Modal and interaction management
+    registerModal,
+    unregisterModal,
+    setUserInteraction,
     
     // Actions
     toggleAutoRefresh,

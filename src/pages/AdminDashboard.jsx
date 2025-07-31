@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useAdminDashboard } from '../hooks/useAdminDashboard';
 import { 
@@ -56,7 +56,7 @@ const AdminDashboard = () => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [pagination, setPagination] = useState({ limit: 20, offset: 0 });
 
-  // Use the custom hook for data management
+  // Use the custom hook for data management with modal controls
   const {
     // Data
     stats,
@@ -80,6 +80,11 @@ const AdminDashboard = () => {
     chartPeriod,
     selectedChartMeter,
     
+    // Modal and interaction management
+    registerModal,
+    unregisterModal,
+    setUserInteraction,
+    
     // Actions
     toggleAutoRefresh,
     manualRefresh,
@@ -97,15 +102,14 @@ const AdminDashboard = () => {
     setUnassignedMeters
   } = useAdminDashboard();
 
-  // NEW: Fetch meter details for admin top-up
+  // Fetch meter details for admin top-up
   const fetchMeterDetails = async (deviceId) => {
     try {
-      // This would typically use your API - for now we'll use the meter data we have
       const meter = meters.find(m => m.device_id === deviceId);
       if (meter) {
         setMeterDetails({
           meter_data: meter,
-          assigned_users: [] // Would come from API
+          assigned_users: []
         });
       }
     } catch (error) {
@@ -140,6 +144,7 @@ const AdminDashboard = () => {
         setTopupData({ units: '', notes: '' });
         setSelectedMeter(null);
         setMeterDetails(null);
+        unregisterModal('topup');
       }
     } catch (error) {
       console.error('Failed to process admin top-up:', error);
@@ -152,6 +157,7 @@ const AdminDashboard = () => {
   const openTopupModal = async (meter) => {
     setSelectedMeter(meter);
     setShowTopupModal(true);
+    registerModal('topup');
     await fetchMeterDetails(meter.device_id);
   };
 
@@ -161,6 +167,7 @@ const AdminDashboard = () => {
       const result = await assignMeterWithValidation(userId, deviceId, nickname);
       if (result.success) {
         setShowAssignModal(false);
+        unregisterModal('assign');
       }
     } catch (error) {
       console.error('Failed to assign meter:', error);
@@ -173,6 +180,7 @@ const AdminDashboard = () => {
       const result = await createMeter(deviceId);
       if (result.success) {
         setShowMeterModal(false);
+        unregisterModal('meter');
       }
     } catch (error) {
       console.error('Failed to create meter:', error);
@@ -194,7 +202,6 @@ const AdminDashboard = () => {
       const data = await response.json();
       if (data.success) {
         toast.success('Transaction completed successfully!');
-        // Refresh data
         manualRefresh();
       } else {
         toast.error('Failed to complete transaction: ' + data.message);
@@ -334,370 +341,469 @@ const AdminDashboard = () => {
     </div>
   );
 
-  // Charts Modal Component
-  const ChartsModal = () => (
-    <Modal 
-      isOpen={showChartsModal} 
-      onClose={() => setShowChartsModal(false)} 
-      title="Usage Analytics & Charts"
-      maxWidth="max-w-6xl"
-    >
-      <div className="space-y-6">
-        {/* Chart Controls */}
-        <div className="flex justify-between items-center">
-          <h4 className="text-lg font-semibold text-white">System Analytics</h4>
-          <div className="flex items-center space-x-3">
-            <select
-              value={selectedChartMeter}
-              onChange={(e) => setSelectedChartMeter(e.target.value)}
-              className="input-field text-sm"
-            >
-              <option value="all">All Meters</option>
-              {meters.map(meter => (
-                <option key={meter.device_id} value={meter.device_id}>
-                  {meter.device_id}
-                </option>
-              ))}
-            </select>
-            <select
-              value={chartPeriod}
-              onChange={(e) => setChartPeriod(e.target.value)}
-              className="input-field text-sm"
-            >
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
-            </select>
-          </div>
-        </div>
+  // Fixed AdminTopupModal Component - Memoized to prevent re-renders
+  const AdminTopupModal = React.memo(() => {
+    // Local state for form data to prevent external interference
+    const [localTopupData, setLocalTopupData] = useState({ units: '', notes: '' });
+    
+    // Reset form data when modal opens
+    useEffect(() => {
+      if (showTopupModal) {
+        registerModal('topup');
+        // Reset local form data when modal opens
+        setLocalTopupData({ units: '', notes: '' });
+        return () => unregisterModal('topup');
+      }
+    }, [showTopupModal]); // Only depend on showTopupModal state
 
-        {/* Main Usage Chart */}
-        <div className="glass rounded-xl p-6">
-          <h5 className="text-white font-medium mb-4">Usage Analytics</h5>
-          {chartLoading ? (
-            <div className="h-80 flex items-center justify-center">
-              <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
-            </div>
-          ) : (
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                  <XAxis 
-                    dataKey="period" 
-                    stroke="#94a3b8"
-                    fontSize={12}
-                  />
-                  <YAxis stroke="#94a3b8" fontSize={12} />
-                  <Tooltip 
-                    contentStyle={{
-                      backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                      border: '1px solid rgba(103, 122, 229, 0.3)',
-                      borderRadius: '8px',
-                      color: '#f1f5f9'
-                    }}
-                  />
-                  <Legend />
-                  <Line 
-                    type="monotone" 
-                    dataKey="avg_usage" 
-                    stroke="#677AE5" 
-                    strokeWidth={2}
-                    name="Avg Usage (kW)"
-                    dot={{ fill: '#677AE5', strokeWidth: 2, r: 4 }}
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="units_purchased" 
-                    stroke="#10B981" 
-                    strokeWidth={2}
-                    name="Units Purchased"
-                    dot={{ fill: '#10B981', strokeWidth: 2, r: 4 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
+    // Memoize the close handler to prevent re-renders
+    const handleClose = useCallback(() => {
+      setShowTopupModal(false);
+      setSelectedMeter(null);
+      setMeterDetails(null);
+      setLocalTopupData({ units: '', notes: '' });
+      unregisterModal('topup');
+    }, []);
 
-        {/* Secondary Charts */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Transaction Volume Chart */}
-          <div className="glass rounded-xl p-6">
-            <h5 className="text-white font-medium mb-4">Transaction Volume</h5>
-            {chartLoading ? (
-              <div className="h-64 flex items-center justify-center">
-                <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
-              </div>
-            ) : (
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                    <XAxis dataKey="period" stroke="#94a3b8" fontSize={12} />
-                    <YAxis stroke="#94a3b8" fontSize={12} />
-                    <Tooltip 
-                      contentStyle={{
-                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                        border: '1px solid rgba(103, 122, 229, 0.3)',
-                        borderRadius: '8px',
-                        color: '#f1f5f9'
-                      }}
-                    />
-                    <Bar dataKey="transaction_count" fill="#677AE5" name="Transactions" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
+    // Memoize the submit handler
+    const handleSubmit = useCallback(async () => {
+      if (!selectedMeter || !localTopupData.units) {
+        toast.error('Please enter a valid amount');
+        return;
+      }
 
-          {/* Units Overview Chart */}
-          <div className="glass rounded-xl p-6">
-            <h5 className="text-white font-medium mb-4">Units Overview</h5>
-            {chartLoading ? (
-              <div className="h-64 flex items-center justify-center">
-                <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
-              </div>
-            ) : (
-              <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                    <XAxis dataKey="period" stroke="#94a3b8" fontSize={12} />
-                    <YAxis stroke="#94a3b8" fontSize={12} />
-                    <Tooltip 
-                      contentStyle={{
-                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                        border: '1px solid rgba(103, 122, 229, 0.3)',
-                        borderRadius: '8px',
-                        color: '#f1f5f9'
-                      }}
-                    />
-                    <Bar dataKey="units_purchased" fill="#10B981" name="Units Purchased" />
-                    <Bar dataKey="units_deducted" fill="#EF4444" name="Units Deducted" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
-        </div>
+      const units = parseInt(localTopupData.units);
+      if (isNaN(units) || units === 0) {
+        toast.error('Please enter a valid non-zero amount');
+        return;
+      }
 
-        {/* Chart Summary */}
-        <div className="glass rounded-xl p-6">
-          <h5 className="text-white font-medium mb-4">Summary Statistics</h5>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-white">
-                {chartData.reduce((sum, item) => sum + (item.avg_usage || 0), 0).toFixed(1)}
+      if (units < -10000 || units > 10000) {
+        toast.error('Amount must be between -10000 and +10000');
+        return;
+      }
+
+      setProcessingTopup(true);
+      try {
+        const result = await adminTopup(selectedMeter.device_id, units, localTopupData.notes);
+        if (result.success) {
+          handleClose();
+        }
+      } catch (error) {
+        console.error('Top-up failed:', error);
+      } finally {
+        setProcessingTopup(false);
+      }
+    }, [selectedMeter, localTopupData, adminTopup, handleClose]);
+
+    return (
+      <Modal 
+        isOpen={showTopupModal} 
+        onClose={handleClose}
+        title="Admin Meter Top-up / Deduction"
+        maxWidth="max-w-lg"
+      >
+        {selectedMeter && (
+          <div className="space-y-6">
+            {/* Meter Information */}
+            <div className="glass rounded-lg p-4">
+              <h4 className="font-semibold text-white mb-2">Meter Information</h4>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-slate-400">Device ID:</span>
+                  <p className="font-medium text-white">{selectedMeter.device_id}</p>
+                </div>
+                <div>
+                  <span className="text-slate-400">Current Usage:</span>
+                  <p className="font-medium text-white">{selectedMeter.kw_usage || 0} kW</p>
+                </div>
+                <div>
+                  <span className="text-slate-400">Units Left:</span>
+                  <p className="font-medium text-white">{selectedMeter.units_left || 0} units</p>
+                </div>
+                <div>
+                  <span className="text-slate-400">Pending Units:</span>
+                  <p className="font-medium text-white">{selectedMeter.pending_units || 0} units</p>
+                </div>
               </div>
-              <div className="text-slate-400 text-sm">Total Avg Usage</div>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-400">
-                {chartData.reduce((sum, item) => sum + (item.units_purchased || 0), 0)}
+
+            {/* Top-up Form */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Units Amount
+                </label>
+                <input
+                  type="number"
+                  value={localTopupData.units}
+                  onChange={(e) => setLocalTopupData(prev => ({ ...prev, units: e.target.value }))}
+                  onFocus={() => setUserInteraction(true)}
+                  onBlur={() => setUserInteraction(false)}
+                  placeholder="Enter amount (positive to add, negative to deduct)"
+                  className="input-field w-full"
+                  min="-10000"
+                  max="10000"
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  Range: -10,000 to +10,000 units. Use negative values for deductions.
+                </p>
               </div>
-              <div className="text-slate-400 text-sm">Units Purchased</div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Admin Notes (Optional)
+                </label>
+                <textarea
+                  value={localTopupData.notes}
+                  onChange={(e) => setLocalTopupData(prev => ({ ...prev, notes: e.target.value }))}
+                  onFocus={() => setUserInteraction(true)}
+                  onBlur={() => setUserInteraction(false)}
+                  placeholder="Enter reason for this adjustment..."
+                  className="input-field w-full"
+                  rows="3"
+                  maxLength="500"
+                />
+              </div>
+
+              {/* Quick Amount Buttons */}
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Quick Amounts
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[100, 200, 500, 1000].map((amount) => (
+                    <button
+                      key={amount}
+                      onClick={() => setLocalTopupData(prev => ({ ...prev, units: amount.toString() }))}
+                      className="px-3 py-2 text-sm glass-button hover:bg-green-500/20 text-green-400 rounded-lg transition-colors"
+                    >
+                      +{amount}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-4 gap-2 mt-2">
+                  {[-50, -100, -200, -500].map((amount) => (
+                    <button
+                      key={amount}
+                      onClick={() => setLocalTopupData(prev => ({ ...prev, units: amount.toString() }))}
+                      className="px-3 py-2 text-sm glass-button hover:bg-red-500/20 text-red-400 rounded-lg transition-colors"
+                    >
+                      {amount}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-red-400">
-                {chartData.reduce((sum, item) => sum + (item.units_deducted || 0), 0)}
-              </div>
-              <div className="text-slate-400 text-sm">Units Deducted</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-400">
-                {chartData.reduce((sum, item) => sum + (item.transaction_count || 0), 0)}
-              </div>
-              <div className="text-slate-400 text-sm">Total Transactions</div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-3 pt-4 border-t border-white/10">
+              <button
+                onClick={handleClose}
+                className="btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmit}
+                disabled={processingTopup || !localTopupData.units}
+                className="btn-primary flex-1 flex items-center justify-center"
+              >
+                {processingTopup ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    <CreditCard className="w-4 h-4 mr-2" />
+                    {localTopupData.units && parseInt(localTopupData.units) < 0 ? 'Deduct' : 'Top Up'}
+                  </>
+                )}
+              </button>
             </div>
           </div>
-        </div>
-      </div>
-    </Modal>
-  );
-  const AdminTopupModal = () => (
-    <Modal 
-      isOpen={showTopupModal} 
-      onClose={() => {
-        setShowTopupModal(false);
-        setSelectedMeter(null);
-        setMeterDetails(null);
-        setTopupData({ units: '', notes: '' });
-      }} 
-      title="Admin Meter Top-up / Deduction"
-      maxWidth="max-w-lg"
-    >
-      {selectedMeter && (
+        )}
+      </Modal>
+    );
+  });
+
+  // Fixed ChartsModal Component
+  const ChartsModal = () => {
+    useEffect(() => {
+      if (showChartsModal) {
+        registerModal('charts');
+        return () => unregisterModal('charts');
+      }
+    }, [showChartsModal]); // Only depend on showChartsModal state
+
+    return (
+      <Modal 
+        isOpen={showChartsModal} 
+        onClose={() => {
+          setShowChartsModal(false);
+          unregisterModal('charts');
+        }} 
+        title="Usage Analytics & Charts"
+        maxWidth="max-w-6xl"
+      >
         <div className="space-y-6">
-          {/* Meter Information */}
-          <div className="glass rounded-lg p-4">
-            <h4 className="font-semibold text-white mb-2">Meter Information</h4>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <span className="text-slate-400">Device ID:</span>
-                <p className="font-medium text-white">{selectedMeter.device_id}</p>
-              </div>
-              <div>
-                <span className="text-slate-400">Current Usage:</span>
-                <p className="font-medium text-white">{selectedMeter.kw_usage || 0} kW</p>
-              </div>
-              <div>
-                <span className="text-slate-400">Units Left:</span>
-                <p className="font-medium text-white">{selectedMeter.units_left || 0} units</p>
-              </div>
-              <div>
-                <span className="text-slate-400">Pending Units:</span>
-                <p className="font-medium text-white">{selectedMeter.pending_units || 0} units</p>
-              </div>
+          {/* Chart Controls */}
+          <div className="flex justify-between items-center">
+            <h4 className="text-lg font-semibold text-white">System Analytics</h4>
+            <div className="flex items-center space-x-3">
+              <select
+                value={selectedChartMeter}
+                onChange={(e) => setSelectedChartMeter(e.target.value)}
+                onFocus={() => setUserInteraction(true)}
+                onBlur={() => setUserInteraction(false)}
+                className="input-field text-sm"
+              >
+                <option value="all">All Meters</option>
+                {meters.map(meter => (
+                  <option key={meter.device_id} value={meter.device_id}>
+                    {meter.device_id}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={chartPeriod}
+                onChange={(e) => setChartPeriod(e.target.value)}
+                onFocus={() => setUserInteraction(true)}
+                onBlur={() => setUserInteraction(false)}
+                className="input-field text-sm"
+              >
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
+              </select>
             </div>
           </div>
 
-          {/* Top-up Form */}
+          {/* Main Usage Chart */}
+          <div className="glass rounded-xl p-6">
+            <h5 className="text-white font-medium mb-4">Usage Analytics</h5>
+            {chartLoading ? (
+              <div className="h-80 flex items-center justify-center">
+                <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+              </div>
+            ) : (
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                    <XAxis 
+                      dataKey="period" 
+                      stroke="#94a3b8"
+                      fontSize={12}
+                    />
+                    <YAxis stroke="#94a3b8" fontSize={12} />
+                    <Tooltip 
+                      contentStyle={{
+                        backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                        border: '1px solid rgba(103, 122, 229, 0.3)',
+                        borderRadius: '8px',
+                        color: '#f1f5f9'
+                      }}
+                    />
+                    <Legend />
+                    <Line 
+                      type="monotone" 
+                      dataKey="avg_usage" 
+                      stroke="#677AE5" 
+                      strokeWidth={2}
+                      name="Avg Usage (kW)"
+                      dot={{ fill: '#677AE5', strokeWidth: 2, r: 4 }}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="units_purchased" 
+                      stroke="#10B981" 
+                      strokeWidth={2}
+                      name="Units Purchased"
+                      dot={{ fill: '#10B981', strokeWidth: 2, r: 4 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* Secondary Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Transaction Volume Chart */}
+            <div className="glass rounded-xl p-6">
+              <h5 className="text-white font-medium mb-4">Transaction Volume</h5>
+              {chartLoading ? (
+                <div className="h-64 flex items-center justify-center">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
+                </div>
+              ) : (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis dataKey="period" stroke="#94a3b8" fontSize={12} />
+                      <YAxis stroke="#94a3b8" fontSize={12} />
+                      <Tooltip 
+                        contentStyle={{
+                          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                          border: '1px solid rgba(103, 122, 229, 0.3)',
+                          borderRadius: '8px',
+                          color: '#f1f5f9'
+                        }}
+                      />
+                      <Bar dataKey="transaction_count" fill="#677AE5" name="Transactions" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            {/* Units Overview Chart */}
+            <div className="glass rounded-xl p-6">
+              <h5 className="text-white font-medium mb-4">Units Overview</h5>
+              {chartLoading ? (
+                <div className="h-64 flex items-center justify-center">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary-500" />
+                </div>
+              ) : (
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <XAxis dataKey="period" stroke="#94a3b8" fontSize={12} />
+                      <YAxis stroke="#94a3b8" fontSize={12} />
+                      <Tooltip 
+                        contentStyle={{
+                          backgroundColor: 'rgba(15, 23, 42, 0.95)',
+                          border: '1px solid rgba(103, 122, 229, 0.3)',
+                          borderRadius: '8px',
+                          color: '#f1f5f9'
+                        }}
+                      />
+                      <Bar dataKey="units_purchased" fill="#10B981" name="Units Purchased" />
+                      <Bar dataKey="units_deducted" fill="#EF4444" name="Units Deducted" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Chart Summary */}
+          <div className="glass rounded-xl p-6">
+            <h5 className="text-white font-medium mb-4">Summary Statistics</h5>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center">
+                <div className="text-2xl font-bold text-white">
+                  {chartData.reduce((sum, item) => sum + (item.avg_usage || 0), 0).toFixed(1)}
+                </div>
+                <div className="text-slate-400 text-sm">Total Avg Usage</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-green-400">
+                  {chartData.reduce((sum, item) => sum + (item.units_purchased || 0), 0)}
+                </div>
+                <div className="text-slate-400 text-sm">Units Purchased</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-red-400">
+                  {chartData.reduce((sum, item) => sum + (item.units_deducted || 0), 0)}
+                </div>
+                <div className="text-slate-400 text-sm">Units Deducted</div>
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-bold text-blue-400">
+                  {chartData.reduce((sum, item) => sum + (item.transaction_count || 0), 0)}
+                </div>
+                <div className="text-slate-400 text-sm">Total Transactions</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Modal>
+    );
+  };
+
+  // Fixed UserModal Component
+  const UserModal = () => {
+    useEffect(() => {
+      if (showUserModal) {
+        registerModal('user');
+        return () => unregisterModal('user');
+      }
+    }, [showUserModal]); // Only depend on showUserModal state
+
+    return (
+      <Modal 
+        isOpen={showUserModal} 
+        onClose={() => {
+          setShowUserModal(false);
+          unregisterModal('user');
+        }} 
+        title="User Details"
+      >
+        {selectedUser && (
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Units Amount
-              </label>
-              <input
-                type="number"
-                value={topupData.units}
-                onChange={(e) => setTopupData(prev => ({ ...prev, units: e.target.value }))}
-                placeholder="Enter amount (positive to add, negative to deduct)"
-                className="input-field w-full"
-                min="-10000"
-                max="10000"
-              />
-              <p className="text-xs text-slate-400 mt-1">
-                Range: -10,000 to +10,000 units. Use negative values for deductions.
+              <label className="block text-sm font-medium text-slate-300 mb-1">Username</label>
+              <p className="text-white">{selectedUser.username}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">Name</label>
+              <p className="text-white">{selectedUser.name}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+              <p className="text-white">{selectedUser.email || 'Not provided'}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">Meters</label>
+              <p className="text-white">{selectedUser.meter_count} meters</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">Role</label>
+              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                selectedUser.is_admin 
+                  ? 'bg-purple-500/20 text-purple-400'
+                  : 'bg-slate-700 text-slate-300'
+              }`}>
+                {selectedUser.is_admin ? 'Admin' : 'User'}
+              </span>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1">Created</label>
+              <p className="text-white">
+                {new Date(selectedUser.created_at).toLocaleDateString()}
               </p>
             </div>
+          </div>
+        )}
+      </Modal>
+    );
+  };
 
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Admin Notes (Optional)
-              </label>
-              <textarea
-                value={topupData.notes}
-                onChange={(e) => setTopupData(prev => ({ ...prev, notes: e.target.value }))}
-                placeholder="Enter reason for this adjustment..."
-                className="input-field w-full"
-                rows="3"
-                maxLength="500"
-              />
-            </div>
-
-            {/* Quick Amount Buttons */}
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-2">
-                Quick Amounts
-              </label>
-              <div className="grid grid-cols-4 gap-2">
-                {[100, 200, 500, 1000].map((amount) => (
-                  <button
-                    key={amount}
-                    onClick={() => setTopupData(prev => ({ ...prev, units: amount.toString() }))}
-                    className="px-3 py-2 text-sm glass-button hover:bg-green-500/20 text-green-400 rounded-lg transition-colors"
-                  >
-                    +{amount}
-                  </button>
-                ))}
-              </div>
-              <div className="grid grid-cols-4 gap-2 mt-2">
-                {[-50, -100, -200, -500].map((amount) => (
-                  <button
-                    key={amount}
-                    onClick={() => setTopupData(prev => ({ ...prev, units: amount.toString() }))}
-                    className="px-3 py-2 text-sm glass-button hover:bg-red-500/20 text-red-400 rounded-lg transition-colors"
-                  >
-                    {amount}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-3 pt-4 border-t border-white/10">
-            <button
-              onClick={() => {
-                setShowTopupModal(false);
-                setSelectedMeter(null);
-                setMeterDetails(null);
-                setTopupData({ units: '', notes: '' });
-              }}
-              className="btn-secondary flex-1"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleAdminTopup}
-              disabled={processingTopup || !topupData.units}
-              className="btn-primary flex-1 flex items-center justify-center"
-            >
-              {processingTopup ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Processing...
-                </>
-              ) : (
-                <>
-                  <CreditCard className="w-4 h-4 mr-2" />
-                  {topupData.units && parseInt(topupData.units) < 0 ? 'Deduct' : 'Top Up'}
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      )}
-    </Modal>
-  );
-
-  const UserModal = () => (
-    <Modal isOpen={showUserModal} onClose={() => setShowUserModal(false)} title="User Details">
-      {selectedUser && (
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Username</label>
-            <p className="text-white">{selectedUser.username}</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Name</label>
-            <p className="text-white">{selectedUser.name}</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Email</label>
-            <p className="text-white">{selectedUser.email || 'Not provided'}</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Meters</label>
-            <p className="text-white">{selectedUser.meter_count} meters</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Role</label>
-            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-              selectedUser.is_admin 
-                ? 'bg-purple-500/20 text-purple-400'
-                : 'bg-slate-700 text-slate-300'
-            }`}>
-              {selectedUser.is_admin ? 'Admin' : 'User'}
-            </span>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Created</label>
-            <p className="text-white">
-              {new Date(selectedUser.created_at).toLocaleDateString()}
-            </p>
-          </div>
-        </div>
-      )}
-    </Modal>
-  );
-
+  // Fixed MeterModal Component
   const MeterModal = () => {
     const [newDeviceId, setNewDeviceId] = useState('');
     
+    useEffect(() => {
+      if (showMeterModal) {
+        registerModal('meter');
+        return () => unregisterModal('meter');
+      }
+    }, [showMeterModal]); // Only depend on showMeterModal state
+    
     return (
-      <Modal isOpen={showMeterModal} onClose={() => setShowMeterModal(false)} title="Create New Meter">
+      <Modal 
+        isOpen={showMeterModal} 
+        onClose={() => {
+          setShowMeterModal(false);
+          unregisterModal('meter');
+        }} 
+        title="Create New Meter"
+      >
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-1">Device ID</label>
@@ -705,6 +811,8 @@ const AdminDashboard = () => {
               type="text"
               value={newDeviceId}
               onChange={(e) => setNewDeviceId(e.target.value)}
+              onFocus={() => setUserInteraction(true)}
+              onBlur={() => setUserInteraction(false)}
               className="input-field w-full"
               placeholder="Enter device ID (e.g., METER001)"
             />
@@ -718,7 +826,10 @@ const AdminDashboard = () => {
               Create Meter
             </button>
             <button
-              onClick={() => setShowMeterModal(false)}
+              onClick={() => {
+                setShowMeterModal(false);
+                unregisterModal('meter');
+              }}
               className="btn-secondary flex-1"
             >
               Cancel
@@ -729,11 +840,19 @@ const AdminDashboard = () => {
     );
   };
 
+  // Fixed AssignMeterModal Component
   const AssignMeterModal = () => {
     const [selectedUserId, setSelectedUserId] = useState('');
     const [selectedMeterDevice, setSelectedMeterDevice] = useState('');
     const [nickname, setNickname] = useState('');
     const [assignmentError, setAssignmentError] = useState('');
+    
+    useEffect(() => {
+      if (showAssignModal) {
+        registerModal('assign');
+        return () => unregisterModal('assign');
+      }
+    }, [showAssignModal]); // Only depend on showAssignModal state
     
     const handleAssignSubmit = async () => {
       if (!selectedUserId || !selectedMeterDevice) {
@@ -756,7 +875,14 @@ const AdminDashboard = () => {
     };
     
     return (
-      <Modal isOpen={showAssignModal} onClose={() => setShowAssignModal(false)} title="Assign Meter to User">
+      <Modal 
+        isOpen={showAssignModal} 
+        onClose={() => {
+          setShowAssignModal(false);
+          unregisterModal('assign');
+        }} 
+        title="Assign Meter to User"
+      >
         <div className="space-y-4">
           {assignmentError && (
             <div className="p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-sm">
@@ -769,6 +895,8 @@ const AdminDashboard = () => {
             <select
               value={selectedUserId}
               onChange={(e) => setSelectedUserId(e.target.value)}
+              onFocus={() => setUserInteraction(true)}
+              onBlur={() => setUserInteraction(false)}
               className="input-field w-full"
             >
               <option value="">Choose a user...</option>
@@ -785,6 +913,8 @@ const AdminDashboard = () => {
             <select
               value={selectedMeterDevice}
               onChange={(e) => setSelectedMeterDevice(e.target.value)}
+              onFocus={() => setUserInteraction(true)}
+              onBlur={() => setUserInteraction(false)}
               className="input-field w-full"
             >
               <option value="">Choose a meter...</option>
@@ -805,6 +935,8 @@ const AdminDashboard = () => {
               type="text"
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
+              onFocus={() => setUserInteraction(true)}
+              onBlur={() => setUserInteraction(false)}
               className="input-field w-full"
               placeholder="e.g., Home Meter, Office Meter"
             />
@@ -819,7 +951,10 @@ const AdminDashboard = () => {
               Assign Meter
             </button>
             <button
-              onClick={() => setShowAssignModal(false)}
+              onClick={() => {
+                setShowAssignModal(false);
+                unregisterModal('assign');
+              }}
               className="btn-secondary flex-1"
             >
               Cancel
@@ -874,7 +1009,7 @@ const AdminDashboard = () => {
     </div>
   );
 
-  // Dashboard content - keeping it simple like the original
+  // Dashboard content
   const DashboardContent = () => (
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -1041,6 +1176,8 @@ const AdminDashboard = () => {
                 placeholder="Search users..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                onFocus={() => setUserInteraction(true)}
+                onBlur={() => setUserInteraction(false)}
                 className="input-field pl-10"
               />
             </div>
@@ -1166,6 +1303,8 @@ const AdminDashboard = () => {
                 placeholder="Search meters..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                onFocus={() => setUserInteraction(true)}
+                onBlur={() => setUserInteraction(false)}
                 className="input-field pl-10"
               />
             </div>
@@ -1322,6 +1461,8 @@ const AdminDashboard = () => {
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
+              onFocus={() => setUserInteraction(true)}
+              onBlur={() => setUserInteraction(false)}
               className="input-field"
             >
               <option value="all">All Status</option>

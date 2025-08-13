@@ -530,42 +530,59 @@ const AdminDashboard = () => {
 
   // Fixed ChartsModal Component
   const ChartsModal = () => {
+    const [isPreSelected, setIsPreSelected] = useState(false);
+
     useEffect(() => {
       if (showChartsModal) {
         registerModal('charts');
+        // Check if a specific meter was pre-selected
+        setIsPreSelected(selectedChartMeter !== 'all');
         return () => unregisterModal('charts');
       }
-    }, [showChartsModal]); // Only depend on showChartsModal state
+    }, [showChartsModal, selectedChartMeter]);
+
+    const handleCloseModal = () => {
+      setShowChartsModal(false);
+      // Reset to 'all' when closing if it was pre-selected
+      if (isPreSelected) {
+        setSelectedChartMeter('all');
+      }
+      unregisterModal('charts');
+    };
 
     return (
       <Modal 
         isOpen={showChartsModal} 
-        onClose={() => {
-          setShowChartsModal(false);
-          unregisterModal('charts');
-        }} 
-        title="Usage Analytics & Charts"
+        onClose={handleCloseModal}
+        title={`Usage Analytics & Charts${isPreSelected ? ` - ${selectedChartMeter}` : ''}`}
         maxWidth="max-w-6xl"
       >
         <div className="space-y-6">
           {/* Chart Controls */}
           <div className="flex justify-between items-center">
-            <h4 className="text-lg font-semibold text-white">System Analytics</h4>
+            <h4 className="text-lg font-semibold text-white">
+              {isPreSelected ? `Analytics for ${selectedChartMeter}` : 'System Analytics'}
+            </h4>
             <div className="flex items-center space-x-3">
-              <select
-                value={selectedChartMeter}
-                onChange={(e) => setSelectedChartMeter(e.target.value)}
-                onFocus={() => setUserInteraction(true)}
-                onBlur={() => setUserInteraction(false)}
-                className="input-field text-sm"
-              >
-                <option value="all">All Meters</option>
-                {meters.map(meter => (
-                  <option key={meter.device_id} value={meter.device_id}>
-                    {meter.device_id}
-                  </option>
-                ))}
-              </select>
+              {/* Only show meter dropdown if not pre-selected */}
+              {!isPreSelected && (
+                <select
+                  value={selectedChartMeter}
+                  onChange={(e) => setSelectedChartMeter(e.target.value)}
+                  onFocus={() => setUserInteraction(true)}
+                  onBlur={() => setUserInteraction(false)}
+                  className="input-field text-sm"
+                >
+                  <option value="all">All Meters</option>
+                  {meters.map(meter => (
+                    <option key={meter.device_id} value={meter.device_id}>
+                      {meter.device_id}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {/* Always show period selector */}
               <select
                 value={chartPeriod}
                 onChange={(e) => setChartPeriod(e.target.value)}
@@ -577,12 +594,29 @@ const AdminDashboard = () => {
                 <option value="monthly">Monthly</option>
                 <option value="yearly">Yearly</option>
               </select>
+
+              {/* Add button to show all meters if pre-selected */}
+              {isPreSelected && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    setSelectedChartMeter('all');
+                    setIsPreSelected(false);
+                  }}
+                  className="btn-secondary text-sm"
+                >
+                  View All Meters
+                </motion.button>
+              )}
             </div>
           </div>
 
           {/* Main Usage Chart */}
           <div className="glass rounded-xl p-6">
-            <h5 className="text-white font-medium mb-4">Usage Analytics</h5>
+            <h5 className="text-white font-medium mb-4">
+              {isPreSelected ? `Usage Analytics - ${selectedChartMeter}` : 'Usage Analytics'}
+            </h5>
             {chartLoading ? (
               <div className="h-80 flex items-center justify-center">
                 <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
@@ -1274,6 +1308,8 @@ const AdminDashboard = () => {
               whileTap={{ scale: 0.95 }}
               onClick={(e) => {
                 e.stopPropagation();
+                // Set the selected meter BEFORE opening the modal
+                setSelectedChartMeter(meter.device_id);
                 setShowChartsModal(true);
               }}
               className="bg-slate-600 text-white px-3 py-1 rounded text-xs hover:bg-slate-700 transition-colors flex items-center"

@@ -1,9 +1,10 @@
 import axios from 'axios';
+import { API_CONFIG } from '../utils/constants.js';
 
 // Create axios instance with default config
 const api = axios.create({
-  baseURL: 'https://poc-vsm.vertexcatalystgroup.co.za:562/api',
-  timeout: 10000,
+  baseURL: API_CONFIG.BASE_URL,
+  timeout: API_CONFIG.TIMEOUT,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -141,8 +142,18 @@ export const adminAPI = {
   },
   
   getRefreshData: async () => {
-    const response = await api.get('/admin/refresh-data');
-    return response.data;
+    // Use existing endpoints instead of the non-existent /admin/refresh-data
+    const [statsResponse, transactionsResponse] = await Promise.all([
+      api.get('/admin/stats'),
+      api.get('/admin/transactions', { params: { limit: 10 } })
+    ]);
+    
+    return {
+      success: true,
+      stats: statsResponse.data.stats,
+      recent_transactions: transactionsResponse.data.transactions,
+      low_units_meters: [] // You can implement this later if needed
+    };
   },
   
   getUsageAnalytics: async (period = 'weekly', meterId = 'all') => {
